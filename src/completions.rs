@@ -1,22 +1,28 @@
-//! `zjp3 completions <shell>` — static clap-generated completions for
-//! fish/zsh/bash/nushell. Fish additionally gets dynamic candidates that
-//! query `zjp3 list` at completion time (session names for session-taking
-//! subcommands, names + dir paths for connect and the bare shorthand).
+//! `zjp3 completions <shell>` — clap-generated completions for
+//! fish/zsh/bash/nushell, post-processed so session-taking arguments
+//! complete **session names** (live/exited + config entries) instead of
+//! falling back to file paths. Candidates are queried live from
+//! `zjp3 list` at completion time (~20 ms).
 
 use clap::CommandFactory;
-use clap_complete::generate;
+use clap_complete::{Generator, generate};
+
+fn generate_to_string(generator: impl Generator) -> String {
+    let mut cmd = crate::cli::Cli::command();
+    let mut buf = Vec::new();
+    generate(generator, &mut cmd, "zjp3", &mut buf);
+    String::from_utf8(buf).unwrap_or_default()
+}
 
 pub fn completions_cmd(shell: &str) {
-    let mut cmd = crate::cli::Cli::command();
-    let mut out = std::io::stdout();
     match shell {
-        "bash" => generate(clap_complete::Shell::Bash, &mut cmd, "zjp3", &mut out),
-        "zsh" => generate(clap_complete::Shell::Zsh, &mut cmd, "zjp3", &mut out),
+        "bash" => print!("{}", generate_to_string(clap_complete::Shell::Bash)),
+        "zsh" => print!("{}", zsh_with_sessions()),
         "fish" => {
-            generate(clap_complete::Shell::Fish, &mut cmd, "zjp3", &mut out);
+            print!("{}", generate_to_string(clap_complete::Shell::Fish));
             print!("{FISH_DYNAMIC}");
         }
-        "nushell" | "nu" => generate(clap_complete_nushell::Nushell, &mut cmd, "zjp3", &mut out),
+        "nushell" | "nu" => print!("{}", nushell_with_sessions()),
         other => {
             eprintln!("zjp3 completions: unknown shell \"{other}\" (fish|zsh|bash|nushell)");
             std::process::exit(1);
@@ -24,19 +30,71 @@ pub fn completions_cmd(shell: &str) {
     }
 }
 
-// Dirs complete by path, not display name: connecting to a bare short name
-// that isn't a session would create a fresh session in $PWD instead.
+// Sessions only by default (no dir paths): completing a zoxide dir by its
+// short display name would create a wrong session in $PWD, and flooding the
+// candidates with paths buries the sessions. Paths can still be typed.
 const FISH_DYNAMIC: &str = r#"
 # ---- zjp3 dynamic completions (appended after clap's static set) ----
 function __zjp3_sessions
     command zjp3 list zellij 2>/dev/null | string split -f2 \t | string match -rv '^$'
-end
-function __zjp3_targets
-    __zjp3_sessions
     command zjp3 list config 2>/dev/null | string split -f2 \t | string match -rv '^$'
-    command zjp3 list zoxide 2>/dev/null | string split -f3 \t | string match -rv '^$'
 end
-complete -c zjp3 -n __fish_use_subcommand -f -a '(__zjp3_targets)'
-complete -c zjp3 -n '__fish_seen_subcommand_from connect' -f -a '(__zjp3_targets)'
-complete -c zjp3 -n '__fish_seen_subcommand_from kill delete pin discard snapshot snapshots restore' -f -a '(__zjp3_sessions)'
+complete -c zjp3 -n __fish_use_subcommand -f -a '(__zjp3_sessions)'
+complete -c zjp3 -n '__fish_seen_subcommand_from connect kill delete pin discard snapshot snapshots restore resolve' -f -a '(__zjp3_sessions)'
 "#;
+
+/// clap's zsh output completes positionals with `_default` (files). Swap the
+/// session-taking ones for a live session lookup; paths (mkdir/root/clone),
+/// rename and the restore index keep file/default behavior.
+fn zsh_with_sessions() -> String {
+    let out = generate_to_string(clap_complete::Shell::Zsh);
+    let func = r#"
+_zjp3_sessions() {
+    local -a sessions
+    sessions=(${(f)"$(command zjp3 list zellij 2>/dev/null | cut -f2)"})
+    sessions+=(${(f)"$(command zjp3 list config 2>/dev/null | cut -f2)"})
+    _describe -t sessions 'zellij session' sessions
+}
+"#;
+    let out = out
+        .replace("':target:_default'", "':target:_zjp3_sessions'")
+        .replace("':name:_default'", "':name:_zjp3_sessions'")
+        .replace("'::name:_default'", "'::name:_zjp3_sessions'");
+    // Inject the helper right after the `#compdef` line.
+    match out.split_once('\n') {
+        Some((first, rest)) => format!("{first}\n{func}\n{rest}"),
+        None => out,
+    }
+}
+
+/// Same for nushell: attach a completer to the session-taking `string`
+/// params. The def lives inside the generated module, before the externs
+/// (the standard nushell completion-file pattern).
+fn nushell_with_sessions() -> String {
+    let out = generate_to_string(clap_complete_nushell::Nushell);
+    let func = r#"
+  def "nu-complete zjp3 sessions" [] {
+    ^zjp3 list zellij err> /dev/null
+    | lines
+    | append (^zjp3 list config err> /dev/null | lines)
+    | each {|l| $l | split row "\t" | get 1 }
+  }
+"#;
+    out.replacen(
+        "module completions {\n",
+        &format!("module completions {{\n{func}"),
+        1,
+    )
+    .replace(
+        "    target: string\n",
+        "    target: string@\"nu-complete zjp3 sessions\"\n",
+    )
+    .replace(
+        "    name: string\n",
+        "    name: string@\"nu-complete zjp3 sessions\"\n",
+    )
+    .replace(
+        "    name?: string\n",
+        "    name?: string@\"nu-complete zjp3 sessions\"\n",
+    )
+}

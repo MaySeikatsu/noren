@@ -635,11 +635,16 @@ fn completions_cover_all_shells_and_fish_is_dynamic() {
     assert!(ok);
     assert!(out.contains("complete -c zjp3"), "got: {out}");
     assert!(out.contains("__zjp3_sessions"), "got: {out}");
-    assert!(out.contains("__zjp3_targets"), "got: {out}");
+    // Sessions only: no dir-path candidates in the dynamic set.
+    assert!(!out.contains("list zoxide"), "got: {out}");
 
     let (out, _, ok) = env.run(&["completions", "zsh"]);
     assert!(ok);
     assert!(out.starts_with("#compdef zjp3"), "got: {out}");
+    assert!(out.contains("_zjp3_sessions"), "got: {out}");
+    assert!(out.contains("':name:_zjp3_sessions'"), "got: {out}");
+    // Path positionals keep file completion.
+    assert!(out.contains("':path:_default'"), "got: {out}");
 
     let (out, _, ok) = env.run(&["completions", "bash"]);
     assert!(ok);
@@ -648,6 +653,10 @@ fn completions_cover_all_shells_and_fish_is_dynamic() {
     let (out, _, ok) = env.run(&["completions", "nushell"]);
     assert!(ok);
     assert!(out.contains("export extern"), "got: {out}");
+    assert!(
+        out.contains("name: string@\"nu-complete zjp3 sessions\""),
+        "got: {out}"
+    );
 
     let (_, err, ok) = env.run(&["completions", "powershell"]);
     assert!(!ok);
