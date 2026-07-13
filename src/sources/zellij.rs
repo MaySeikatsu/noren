@@ -1,6 +1,7 @@
 //! zellij source: `zellij list-sessions -n`, state live|exited, path from
 //! the first `cwd "..."` in the serialized session layout, pin from pin file.
 
+use std::path::PathBuf;
 use std::process::Command;
 
 use crate::config::Config;
@@ -8,13 +9,18 @@ use crate::sources::Row;
 use crate::state::read_pins;
 use crate::util::home_dir;
 
+/// Resurrection cache: the serialized layout zellij keeps per session.
+pub fn cached_layout_file(name: &str) -> PathBuf {
+    home_dir()
+        .join(".cache/zellij/contract_version_1/session_info")
+        .join(name)
+        .join("session-layout.kdl")
+}
+
 /// Path of the session's first tab, from the serialized layout. Cheap enough
 /// for a few dozen sessions; empty string on any failure.
 pub fn session_path(name: &str) -> String {
-    let f = home_dir()
-        .join(".cache/zellij/contract_version_1/session_info")
-        .join(name)
-        .join("session-layout.kdl");
+    let f = cached_layout_file(name);
     let Ok(src) = std::fs::read_to_string(&f) else {
         return String::new();
     };

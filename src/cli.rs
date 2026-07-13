@@ -32,6 +32,8 @@ pub enum Cmd {
     Kill { name: String },
     /// hard delete (removes serialization)
     Delete { name: String },
+    /// close current session: switch to the previous one, then soft-kill
+    Discard { name: Option<String> },
     /// mkdir -p + connect
     Mkdir { path: String },
     /// git clone + connect
@@ -47,6 +49,19 @@ pub enum Cmd {
     },
     /// rename current session (also updates pin)
     Rename { new: String },
+    /// save a point-in-time layout snapshot (default: current session)
+    Snapshot { name: Option<String> },
+    /// list snapshots, newest first (default: current session)
+    Snapshots { name: Option<String> },
+    /// recreate a session from a snapshot (1 = newest; see `snapshots`)
+    Restore {
+        name: String,
+        #[arg(default_value = "1")]
+        index: usize,
+        /// skip the confirmation prompt
+        #[arg(short, long)]
+        force: bool,
+    },
     /// tabs in session: list, switch, or create
     Window {
         target: Option<String>,
@@ -69,6 +84,9 @@ pub enum Cmd {
         #[arg(long, default_value = "env")]
         format: String,
     },
+    /// shell completions to stdout: fish | zsh | bash | nushell
+    #[command(hide = true)]
+    Completions { shell: String },
     /// unknown subcommand falls through to `connect <sub>` (sesh shorthand)
     #[command(external_subcommand)]
     External(Vec<String>),

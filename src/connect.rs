@@ -129,10 +129,26 @@ fn layout_path(layout: &str) -> PathBuf {
         .join(format!("{layout}.kdl"))
 }
 
-fn inside_zellij() -> bool {
+pub fn inside_zellij() -> bool {
     std::env::var("ZELLIJ")
         .map(|v| !v.is_empty())
         .unwrap_or(false)
+}
+
+/// Switch the current client via the zellij-switch plugin (never `attach`
+/// from inside — nesting).
+pub fn switch_in_place(name: &str) -> anyhow::Result<()> {
+    let plugin = format!(
+        "file:{}",
+        home_dir()
+            .join(".config/zellij/plugins/zellij-switch.wasm")
+            .display()
+    );
+    Command::new("zellij")
+        .args(["pipe", "--plugin", &plugin, "--"])
+        .arg(format!("--session {name}"))
+        .status()?;
+    Ok(())
 }
 
 /// Attach to / create / switch to the resolved session.
@@ -189,20 +205,15 @@ pub fn session_connect(cfg: &Config, target: &str) -> anyhow::Result<()> {
         }
     }
 
+    // Pinned sessions get a point-in-time backup on every connect (opt-in).
+    if exists && cfg.auto_snapshot_pinned && crate::state::is_pinned(&r.name) {
+        let _ = crate::snapshot::take_snapshot(cfg, &r.name);
+    }
+
     record_last(&r.name);
 
     if inside {
-        // Switch the client in place (no nesting).
-        let plugin = format!(
-            "file:{}",
-            home_dir()
-                .join(".config/zellij/plugins/zellij-switch.wasm")
-                .display()
-        );
-        Command::new("zellij")
-            .args(["pipe", "--plugin", &plugin, "--"])
-            .arg(format!("--session {}", r.name))
-            .status()?;
+        switch_in_place(&r.name)?;
         Ok(())
     } else {
         let lp = layout_path(&r.layout);
@@ -216,6 +227,50 @@ pub fn session_connect(cfg: &Config, target: &str) -> anyhow::Result<()> {
         // exec never returns on success.
         Err(cmd.current_dir(&cwd).exec().into())
     }
+}
+
+/// `zjp3 discard [name]` — "close tab" for sessions: switch this client to
+/// the previous (or any other live) session first, then soft-kill the
+/// discarded one. The resurrection layout survives, exactly like `kill`.
+pub fn discard(cfg: &Config, name: Option<&str>) -> anyhow::Result<()> {
+    let current = std::env::var("ZELLIJ_SESSION_NAME").unwrap_or_default();
+    let target = name
+        .map(str::to_string)
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| current.clone());
+    if target.is_empty() {
+        anyhow::bail!("zjp3 discard: no name given and not inside a zellij session");
+    }
+
+    if inside_zellij() && target == current {
+        let live: Vec<String> = crate::sources::zellij::zellij_sessions(cfg)
+            .into_iter()
+            .filter(|r| r.state == "live" && r.name != target)
+            .map(|r| r.name)
+            .collect();
+        // Prefer the recorded previous session, else any other live one.
+        let prev = crate::state::read_last();
+        let fallback = if !prev.is_empty() && prev != target && live.contains(&prev) {
+            prev
+        } else {
+            live.first().cloned().unwrap_or_default()
+        };
+        if !fallback.is_empty() {
+            switch_in_place(&fallback)?;
+            record_last(&fallback);
+            // Let the client finish switching before its old session dies.
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
+    }
+
+    let status = Command::new("zellij")
+        .args(["kill-session", &target])
+        .status()?;
+    if !status.success() {
+        anyhow::bail!("zellij kill-session {target} failed");
+    }
+    println!("discarded: {target}");
+    Ok(())
 }
 
 #[cfg(test)]

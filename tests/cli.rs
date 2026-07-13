@@ -445,9 +445,180 @@ fn help_lists_all_subcommands() {
     let (out, _, ok) = env.run(&["help"]);
     assert!(ok);
     for sub in [
-        "list", "connect", "last", "root", "kill", "delete", "mkdir", "clone", "pin", "rename",
-        "window", "preview", "picker", "name-for", "resolve",
+        "list", "connect", "last", "root", "kill", "delete", "discard", "mkdir", "clone", "pin",
+        "rename", "snapshot", "snapshots", "restore", "window", "preview", "picker", "name-for",
+        "resolve",
     ] {
         assert!(out.contains(sub), "help missing `{sub}`:\n{out}");
     }
+}
+
+#[test]
+fn discard_inside_switches_to_previous_then_kills() {
+    let env = Env::new();
+    // Stub answers list-sessions with two live sessions and logs everything.
+    env.stub(
+        "zellij",
+        r#"echo "$@" >> "$HOME/zellij-args.log"
+if [ "$1" = "list-sessions" ]; then
+  echo "cur [Created 1h ago]"
+  echo "other [Created 2h ago]"
+fi"#,
+    );
+    fs::create_dir_all(env.home.join(".local/state/zjp")).unwrap();
+    fs::write(env.home.join(".local/state/zjp/previous"), "other\n").unwrap();
+
+    let (out, _, ok) = env.run_env(
+        &["discard"],
+        &[("ZELLIJ", "1"), ("ZELLIJ_SESSION_NAME", "cur")],
+    );
+    assert!(ok, "discard failed: {out}");
+    assert_eq!(out, "discarded: cur\n");
+    let log = env.zellij_log();
+    let switch = format!(
+        "pipe --plugin file:{}/.config/zellij/plugins/zellij-switch.wasm -- --session other",
+        env.home.display()
+    );
+    assert!(log.iter().any(|l| l == &switch), "log: {log:?}");
+    assert_eq!(log.last().unwrap(), "kill-session cur");
+    // The switch happens BEFORE the kill.
+    let si = log.iter().position(|l| l == &switch).unwrap();
+    let ki = log.iter().position(|l| l == "kill-session cur").unwrap();
+    assert!(si < ki);
+}
+
+#[test]
+fn snapshot_dumps_live_layout_and_prunes_to_keep() {
+    let env = Env::new();
+    // dump-layout output changes each call (counter file) so snapshots differ.
+    env.stub(
+        "zellij",
+        r#"case "$1" in
+  list-sessions) echo "foo [Created 1h ago]";;
+  action)
+    n=$(cat "$HOME/n" 2>/dev/null || echo 0)
+    echo $((n + 1)) > "$HOME/n"
+    echo "layout { cwd \"/tmp\" } // v$n";;
+esac"#,
+    );
+    fs::create_dir_all(env.home.join(".config/zjp")).unwrap();
+    fs::write(
+        env.home.join(".config/zjp/config.toml"),
+        "snapshot_keep = 2\n",
+    )
+    .unwrap();
+
+    for _ in 0..3 {
+        let (out, err, ok) = env.run(&["snapshot", "foo"]);
+        assert!(ok, "snapshot failed: {out} {err}");
+        assert!(out.starts_with("snapshot: "), "got: {out}");
+    }
+    let dir = env.home.join(".local/state/zjp/snapshots/foo");
+    let mut files: Vec<_> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    files.sort();
+    // Pruned to snapshot_keep = 2; the newest content (v2) survived.
+    assert_eq!(files.len(), 2, "files: {files:?}");
+    let bodies: Vec<String> = files
+        .iter()
+        .map(|f| fs::read_to_string(f).unwrap())
+        .collect();
+    assert!(bodies.iter().any(|b| b.contains("// v2")), "{bodies:?}");
+    assert!(!bodies.iter().any(|b| b.contains("// v0")), "{bodies:?}");
+
+    // `snapshots` lists them newest first, 1-based.
+    let (out, _, ok) = env.run(&["snapshots", "foo"]);
+    assert!(ok);
+    assert!(out.starts_with("1: "), "got: {out}");
+    assert_eq!(out.lines().count(), 2);
+}
+
+#[test]
+fn snapshot_of_exited_session_uses_resurrection_cache() {
+    let env = Env::new();
+    env.stub("zellij", "exit 0"); // no live sessions
+    let info = env
+        .home
+        .join(".cache/zellij/contract_version_1/session_info/ghost");
+    fs::create_dir_all(&info).unwrap();
+    fs::write(info.join("session-layout.kdl"), "layout { }\n").unwrap();
+
+    let (out, _, ok) = env.run(&["snapshot", "ghost"]);
+    assert!(ok, "got: {out}");
+    let dir = env.home.join(".local/state/zjp/snapshots/ghost");
+    assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+
+    // Identical content doesn't pile up a duplicate snapshot.
+    let (_, _, ok) = env.run(&["snapshot", "ghost"]);
+    assert!(ok);
+    assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+}
+
+#[test]
+fn restore_outside_execs_new_session_with_snapshot_layout() {
+    let env = Env::new();
+    env.stub_zellij_logging();
+    let dir = env.home.join(".local/state/zjp/snapshots/foo");
+    fs::create_dir_all(&dir).unwrap();
+    let snap = dir.join("20260713-090000.kdl");
+    fs::write(&snap, "layout { }\n").unwrap();
+
+    let (_, _, ok) = env.run(&["restore", "foo", "--force"]);
+    assert!(ok);
+    let expected = format!("--session foo --new-session-with-layout {}", snap.display());
+    assert_eq!(env.zellij_log().last().unwrap(), &expected);
+}
+
+#[test]
+fn connect_auto_snapshots_pinned_sessions_when_enabled() {
+    let env = Env::new();
+    env.stub(
+        "zellij",
+        r#"echo "$@" >> "$HOME/zellij-args.log"
+case "$1" in
+  list-sessions) echo "foo [Created 1h ago]";;
+  action) echo "layout { }";;
+esac"#,
+    );
+    fs::create_dir_all(env.home.join(".config/zjp")).unwrap();
+    fs::write(
+        env.home.join(".config/zjp/config.toml"),
+        "auto_snapshot_pinned = true\n",
+    )
+    .unwrap();
+    fs::create_dir_all(env.home.join(".local/state/zellij")).unwrap();
+    fs::write(env.home.join(".local/state/zellij/pinned"), "foo\n").unwrap();
+
+    let (_, _, ok) = env.run_env(&["connect", "foo"], &[("ZELLIJ", "1")]);
+    assert!(ok);
+    let dir = env.home.join(".local/state/zjp/snapshots/foo");
+    assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+}
+
+#[test]
+fn completions_cover_all_shells_and_fish_is_dynamic() {
+    let env = Env::new();
+    let (out, _, ok) = env.run(&["completions", "fish"]);
+    assert!(ok);
+    assert!(out.contains("complete -c zjp3"), "got: {out}");
+    assert!(out.contains("__zjp3_sessions"), "got: {out}");
+    assert!(out.contains("__zjp3_targets"), "got: {out}");
+
+    let (out, _, ok) = env.run(&["completions", "zsh"]);
+    assert!(ok);
+    assert!(out.starts_with("#compdef zjp3"), "got: {out}");
+
+    let (out, _, ok) = env.run(&["completions", "bash"]);
+    assert!(ok);
+    assert!(out.contains("zjp3"), "got: {out}");
+
+    let (out, _, ok) = env.run(&["completions", "nushell"]);
+    assert!(ok);
+    assert!(out.contains("export extern"), "got: {out}");
+
+    let (_, err, ok) = env.run(&["completions", "powershell"]);
+    assert!(!ok);
+    assert!(err.contains("unknown shell"), "got: {err}");
 }

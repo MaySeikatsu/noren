@@ -18,6 +18,8 @@ pub struct Config {
     pub blacklist: Vec<String>,
     pub dir_length: usize,
     pub icons: bool,
+    pub snapshot_keep: usize,
+    pub auto_snapshot_pinned: bool,
     pub default_session: DefaultSession,
     pub session: Vec<SessionEntry>,
     pub wildcard: Vec<WildcardEntry>,
@@ -41,6 +43,10 @@ impl Default for Config {
             blacklist: vec![],
             dir_length: 1,
             icons: true,
+            // Snapshots per session (`zjp3 snapshot`); oldest pruned beyond this.
+            snapshot_keep: 5,
+            // Auto-snapshot pinned sessions on pin and on connect.
+            auto_snapshot_pinned: false,
             default_session: DefaultSession::default(),
             session: vec![],
             wildcard: vec![],

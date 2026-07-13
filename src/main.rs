@@ -1,10 +1,12 @@
 mod cli;
+mod completions;
 mod config;
 mod connect;
 mod layout_preview;
 mod picker;
 mod preview;
 mod session;
+mod snapshot;
 mod sources;
 mod state;
 mod util;
@@ -101,12 +103,28 @@ fn main() -> anyhow::Result<()> {
             }
             connect::session_connect(&Config::load(), &p.to_string_lossy())
         }
+        Some(Cmd::Discard { name }) => connect::discard(&Config::load(), name.as_deref()),
         Some(Cmd::Pin { name }) => {
-            session::pin_cmd(name.as_deref());
+            session::pin_cmd(&Config::load(), name.as_deref());
             Ok(())
         }
         Some(Cmd::PinRow { line }) => {
-            session::pin_row(&line.join(" "));
+            session::pin_row(&Config::load(), &line.join(" "));
+            Ok(())
+        }
+        Some(Cmd::Snapshot { name }) => {
+            snapshot::snapshot_cmd(&Config::load(), name.as_deref());
+            Ok(())
+        }
+        Some(Cmd::Snapshots { name }) => {
+            snapshot::snapshots_cmd(name.as_deref());
+            Ok(())
+        }
+        Some(Cmd::Restore { name, index, force }) => {
+            snapshot::restore_cmd(&Config::load(), &name, index, force)
+        }
+        Some(Cmd::Completions { shell }) => {
+            completions::completions_cmd(&shell);
             Ok(())
         }
         Some(Cmd::Rename { new }) => {
