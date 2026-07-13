@@ -27,6 +27,7 @@ noren merges your **running zellij sessions**, **[zoxide](https://github.com/aje
 - **Snapshots** — point-in-time backups of a session's layout + running commands; restore any of the last N. Optionally automatic for pinned sessions.
 - **Project rules** — `[[session]]` entries and `[[wildcard]]` globs assign layouts, startup commands, and preview commands per project; `noren resolve` exposes the same resolver to shell scripts (e.g. an autostart hook).
 - **Discard** — "close tab" for sessions: switch back to your previous session, then soft-kill the one you left.
+- **Alt-tab for sessions** — `noren last` toggles current ↔ previous in place; bound to `Alt Shift Tab` it feels like window switching (see [docs/integration.md](docs/integration.md)).
 - **Fast** — a single sync Rust binary (~1.2 MB, 7 crates, no TUI framework, no async runtime); `list` in ~20 ms (~250 ms with the attached indicator).
 - **Shell completions** — fish/zsh/bash/nushell, with live session-name completion.
 
@@ -122,12 +123,14 @@ Resolver precedence for `noren <target>`: `[[session]]` (name or path) → live/
 
 | Path | Purpose |
 | --- | --- |
-| `~/.config/noren/config.toml` | configuration (legacy `~/.config/zjp/config.toml` read as fallback) |
-| `~/.local/state/zjp/last`, `previous` | connect history (powers `noren last`) |
-| `~/.local/state/zjp/pinned-dirs` | pinned folder paths (noren-owned) |
-| `~/.local/state/zjp/snapshots/<session>/` | layout snapshots |
+| `~/.config/noren/config.toml` | configuration |
+| `~/.local/state/noren/last`, `previous` | connect history (powers `noren last` / the alt-tab toggle) |
+| `~/.local/state/noren/pinned-dirs` | pinned folder paths (noren-owned) |
+| `~/.local/state/noren/snapshots/<session>/` | layout snapshots |
 | `~/.local/state/zellij/pinned` | pinned session names — deliberately shared, so external tools (status bars, reapers) can honor pins |
 | `~/.cache/zellij/…/session_info/` | zellij's own layout serialization (read-only for previews/snapshots) |
+
+Pre-rename files under `~/.config/zjp/` and `~/.local/state/zjp/` are copied to the noren locations automatically on first run (copied, not moved — the predecessor tools keep working).
 
 ## Integration
 

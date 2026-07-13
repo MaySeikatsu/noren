@@ -107,6 +107,10 @@ keybinds {
         bind "Alt Shift P" { Run "noren" "pin" { floating true; close_on_exit true; }; }
         // Discard: switch back to the previous session, then soft-kill this one.
         bind "Alt Shift W" { Run "noren" "discard" { floating true; close_on_exit true; }; }
+        // Alt-tab for sessions: toggle current <-> previous in this window.
+        // (Needs a terminal that reports Alt+Shift+Tab distinctly, e.g. via
+        // the kitty keyboard protocol — foot, kitty, wezterm, ghostty do.)
+        bind "Alt Shift Tab" { Run "noren" "last" { floating true; close_on_exit true; }; }
     }
     session {
         bind "s" { Run "noren" { floating true; close_on_exit true; }; SwitchToMode "locked"; }
@@ -161,16 +165,17 @@ consumers.
 
 | Path | Owner | Notes |
 | --- | --- | --- |
-| `~/.config/noren/config.toml` | you | all options; `~/.config/zjp/config.toml` read as legacy fallback |
-| `~/.local/state/zjp/last`, `previous` | noren | rotation on every connect; powers `noren last` |
-| `~/.local/state/zjp/pinned-dirs` | noren | pinned folder paths, one per line |
-| `~/.local/state/zjp/snapshots/<session>/*.kdl` | noren | UTC-stamped layout snapshots, `snapshot_keep` newest |
+| `~/.config/noren/config.toml` | you | all options |
+| `~/.local/state/noren/last`, `previous` | noren | rotation on every connect; powers `noren last` |
+| `~/.local/state/noren/pinned-dirs` | noren | pinned folder paths, one per line |
+| `~/.local/state/noren/snapshots/<session>/*.kdl` | noren | UTC-stamped layout snapshots, `snapshot_keep` newest |
 | `~/.local/state/zellij/pinned` | **shared** | pinned session names, one per line, trailing newline. External tools may read/append (status-bar widgets, session reapers that spare pinned sessions) — noren never writes anything but names here |
 | `~/.local/state/zellij/current-session` | shared | written on `noren rename` for status-bar consumers |
 | `~/.cache/zellij/contract_version_1/session_info/` | zellij | serialized layouts; noren only reads (previews, snapshots of exited sessions) |
 
-The `zjp` state-directory name is inherited from noren's predecessor and kept
-for compatibility; it will migrate in a future release.
+Legacy files from noren's predecessor (`~/.config/zjp/config.toml`,
+`~/.local/state/zjp/*`) are copied to the noren locations automatically on
+first run; `~/.config/zjp/config.toml` also remains readable as a fallback.
 
 ## 7. Ecosystem pattern: pin-aware session reaping
 

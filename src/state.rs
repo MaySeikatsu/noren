@@ -1,28 +1,64 @@
 //! On-disk state, SHARED with sibling shell scripts — formats are contracts:
-//!   ~/.local/state/zjp/last, ~/.local/state/zjp/previous  (noren-owned)
+//!   ~/.local/state/noren/{last,previous,pinned-dirs,snapshots}  (noren-owned)
 //!   ~/.local/state/zellij/pinned          (shared with zpin/zunpin/sn/reaper)
 //!   ~/.local/state/zellij/current-session (pin-indicator fallback)
+//!
+//! Pre-rename state under ~/.local/state/zjp (and config under
+//! ~/.config/zjp) is COPIED to the noren locations on first run — copied,
+//! not moved, so zjp2 keeps working from its own files during the bake-off.
 
 use std::fs;
 use std::path::PathBuf;
 
 use crate::util::home_dir;
 
-fn zjp_state_dir() -> PathBuf {
-    home_dir().join(".local/state/zjp")
+pub fn state_dir() -> PathBuf {
+    home_dir().join(".local/state/noren")
+}
+
+/// One-time adoption of pre-rename files. Runs at startup; a single stat in
+/// the common case (noren dir already present).
+pub fn migrate_legacy() {
+    let new = state_dir();
+    let old = home_dir().join(".local/state/zjp");
+    if !new.exists() && old.exists() {
+        copy_tree(&old, &new);
+    }
+    let new_cfg = home_dir().join(".config/noren/config.toml");
+    let old_cfg = home_dir().join(".config/zjp/config.toml");
+    if !new_cfg.exists() && old_cfg.exists() {
+        if let Some(dir) = new_cfg.parent() {
+            let _ = fs::create_dir_all(dir);
+        }
+        let _ = fs::copy(&old_cfg, &new_cfg);
+    }
+}
+
+fn copy_tree(from: &PathBuf, to: &PathBuf) {
+    let _ = fs::create_dir_all(to);
+    let Ok(rd) = fs::read_dir(from) else { return };
+    for entry in rd.flatten() {
+        let src = entry.path();
+        let dst = to.join(entry.file_name());
+        if src.is_dir() {
+            copy_tree(&src, &dst);
+        } else {
+            let _ = fs::copy(&src, &dst);
+        }
+    }
 }
 
 fn last_file() -> PathBuf {
-    zjp_state_dir().join("last")
+    state_dir().join("last")
 }
 
 fn previous_file() -> PathBuf {
-    zjp_state_dir().join("previous")
+    state_dir().join("previous")
 }
 
 /// Rotate: the previous "current" becomes "previous", `name` becomes "last".
 pub fn record_last(name: &str) {
-    let dir = zjp_state_dir();
+    let dir = state_dir();
     let _ = fs::create_dir_all(&dir);
     let curr = fs::read_to_string(last_file())
         .map(|s| s.trim().to_string())
@@ -50,7 +86,7 @@ fn pin_file() -> PathBuf {
 }
 
 fn dir_pin_file() -> PathBuf {
-    zjp_state_dir().join("pinned-dirs")
+    state_dir().join("pinned-dirs")
 }
 
 fn read_lines(f: &PathBuf) -> Vec<String> {

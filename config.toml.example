@@ -50,7 +50,7 @@ attached_indicator = true
 
 # ---- Snapshots ----------------------------------------------------------------
 # `noren snapshot [name]` stores a point-in-time copy of the session's layout
-# under ~/.local/state/zjp/snapshots/<name>/; `noren restore <name> [index]`
+# under ~/.local/state/noren/snapshots/<name>/; `noren restore <name> [index]`
 # recreates the session from one (1 = newest, see `noren snapshots`).
 
 # How many snapshots to keep per session (oldest are pruned).

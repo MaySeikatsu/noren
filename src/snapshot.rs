@@ -1,5 +1,5 @@
 //! Session snapshots: point-in-time copies of the serialized layout, stored
-//! under ~/.local/state/zjp/snapshots/<session>/<YYYYmmdd-HHMMSS>.kdl.
+//! under ~/.local/state/noren/snapshots/<session>/<YYYYmmdd-HHMMSS>.kdl.
 //!
 //! Live sessions are dumped from the server (`zellij action dump-layout`,
 //! targeted via ZELLIJ_SESSION_NAME like window.rs); exited sessions fall
@@ -16,10 +16,9 @@ use crate::config::Config;
 use crate::connect::{inside_zellij, switch_in_place};
 use crate::sources::zellij::{cached_layout_file, zellij_sessions};
 use crate::state::record_last;
-use crate::util::home_dir;
 
 fn session_dir(name: &str) -> PathBuf {
-    home_dir().join(".local/state/zjp/snapshots").join(name)
+    crate::state::state_dir().join("snapshots").join(name)
 }
 
 /// UTC snapshot filename stamp (Hinnant's civil_from_days; no chrono dep).
@@ -109,7 +108,9 @@ pub fn take_snapshot(cfg: &Config, name: &str) -> anyhow::Result<PathBuf> {
     let dir = session_dir(name);
     fs::create_dir_all(&dir)?;
     if let Some(newest) = list_snapshots(name).first()
-        && fs::read_to_string(newest).map(|s| s == body).unwrap_or(false)
+        && fs::read_to_string(newest)
+            .map(|s| s == body)
+            .unwrap_or(false)
     {
         return Ok(newest.clone());
     }
@@ -160,7 +161,10 @@ pub fn snapshots_cmd(name: Option<&str>) {
         return;
     }
     for (i, f) in snaps.iter().enumerate() {
-        let stem = f.file_stem().map(|s| s.to_string_lossy()).unwrap_or_default();
+        let stem = f
+            .file_stem()
+            .map(|s| s.to_string_lossy())
+            .unwrap_or_default();
         let size = f.metadata().map(|m| m.len()).unwrap_or(0);
         println!("{}: {stem} ({size} B)", i + 1);
     }

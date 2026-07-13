@@ -198,7 +198,7 @@ fn pin_row_pins_dirs_separately_and_sorts_them_first_in_dir_group() {
     assert!(ok);
     assert_eq!(out, "/tmp/bbb: pinned\n");
     // Dir pins land in noren's own file, NOT the shared session pin file.
-    let dirs = fs::read_to_string(env.home.join(".local/state/zjp/pinned-dirs")).unwrap();
+    let dirs = fs::read_to_string(env.home.join(".local/state/noren/pinned-dirs")).unwrap();
     assert_eq!(dirs, "/tmp/bbb\n");
     assert!(!env.home.join(".local/state/zellij/pinned").exists());
 
@@ -237,8 +237,12 @@ fn pinned_dirs_join_session_pins_when_configured() {
     .unwrap();
     fs::create_dir_all(env.home.join(".local/state/zellij")).unwrap();
     fs::write(env.home.join(".local/state/zellij/pinned"), "pinned-sess\n").unwrap();
-    fs::create_dir_all(env.home.join(".local/state/zjp")).unwrap();
-    fs::write(env.home.join(".local/state/zjp/pinned-dirs"), "/tmp/bbb\n").unwrap();
+    fs::create_dir_all(env.home.join(".local/state/noren")).unwrap();
+    fs::write(
+        env.home.join(".local/state/noren/pinned-dirs"),
+        "/tmp/bbb\n",
+    )
+    .unwrap();
 
     let (out, _, ok) = env.run(&["list", "all"]);
     assert!(ok);
@@ -394,6 +398,46 @@ fn last_without_state_fails_cleanly() {
 }
 
 #[test]
+fn legacy_zjp_state_and_config_are_adopted_on_first_run() {
+    let env = Env::new();
+    env.stub("zellij", "exit 0");
+    env.stub("zoxide", "exit 0");
+    // Pre-rename layout: state + config under the zjp names.
+    fs::create_dir_all(env.home.join(".local/state/zjp/snapshots/foo")).unwrap();
+    fs::write(env.home.join(".local/state/zjp/previous"), "oldsess\n").unwrap();
+    fs::write(env.home.join(".local/state/zjp/pinned-dirs"), "/tmp/dir\n").unwrap();
+    fs::write(
+        env.home
+            .join(".local/state/zjp/snapshots/foo/20260713-000000.kdl"),
+        "layout { }\n",
+    )
+    .unwrap();
+    fs::create_dir_all(env.home.join(".config/zjp")).unwrap();
+    fs::write(env.home.join(".config/zjp/config.toml"), "icons = false\n").unwrap();
+
+    // Any invocation migrates; `list` is side-effect-free otherwise.
+    let (_, _, ok) = env.run(&["list", "zellij"]);
+    assert!(ok);
+    let st = env.home.join(".local/state/noren");
+    assert_eq!(
+        fs::read_to_string(st.join("previous")).unwrap(),
+        "oldsess\n"
+    );
+    assert_eq!(
+        fs::read_to_string(st.join("pinned-dirs")).unwrap(),
+        "/tmp/dir\n"
+    );
+    assert!(st.join("snapshots/foo/20260713-000000.kdl").exists());
+    assert_eq!(
+        fs::read_to_string(env.home.join(".config/noren/config.toml")).unwrap(),
+        "icons = false\n"
+    );
+    // Copied, not moved — zjp2 keeps its files during the bake-off.
+    assert!(env.home.join(".local/state/zjp/previous").exists());
+    assert!(env.home.join(".config/zjp/config.toml").exists());
+}
+
+#[test]
 fn config_prefers_noren_dir_over_legacy_zjp() {
     let env = Env::new();
     env.stub("zellij", "exit 0");
@@ -401,9 +445,17 @@ fn config_prefers_noren_dir_over_legacy_zjp() {
     // Legacy config blacklists the dir; the noren config doesn't. The noren
     // one must win.
     fs::create_dir_all(env.home.join(".config/zjp")).unwrap();
-    fs::write(env.home.join(".config/zjp/config.toml"), "blacklist = [\"x\"]\n").unwrap();
+    fs::write(
+        env.home.join(".config/zjp/config.toml"),
+        "blacklist = [\"x\"]\n",
+    )
+    .unwrap();
     fs::create_dir_all(env.home.join(".config/noren")).unwrap();
-    fs::write(env.home.join(".config/noren/config.toml"), "icons = false\n").unwrap();
+    fs::write(
+        env.home.join(".config/noren/config.toml"),
+        "icons = false\n",
+    )
+    .unwrap();
 
     let (out, _, ok) = env.run(&["list", "zoxide"]);
     assert!(ok);
@@ -437,7 +489,7 @@ fn connect_outside_zellij_execs_attach_create() {
     let log = env.zellij_log();
     assert_eq!(log.last().unwrap(), "attach --create ghost-name");
     // last-session state is recorded on connect
-    let last = fs::read_to_string(env.home.join(".local/state/zjp/last")).unwrap();
+    let last = fs::read_to_string(env.home.join(".local/state/noren/last")).unwrap();
     assert_eq!(last, "ghost-name");
 }
 
@@ -488,8 +540,24 @@ fn help_lists_all_subcommands() {
     let (out, _, ok) = env.run(&["help"]);
     assert!(ok);
     for sub in [
-        "list", "connect", "last", "root", "kill", "delete", "discard", "mkdir", "clone", "pin",
-        "rename", "snapshot", "snapshots", "restore", "window", "preview", "picker", "name-for",
+        "list",
+        "connect",
+        "last",
+        "root",
+        "kill",
+        "delete",
+        "discard",
+        "mkdir",
+        "clone",
+        "pin",
+        "rename",
+        "snapshot",
+        "snapshots",
+        "restore",
+        "window",
+        "preview",
+        "picker",
+        "name-for",
         "resolve",
     ] {
         assert!(out.contains(sub), "help missing `{sub}`:\n{out}");
@@ -508,8 +576,8 @@ if [ "$1" = "list-sessions" ]; then
   echo "other [Created 2h ago]"
 fi"#,
     );
-    fs::create_dir_all(env.home.join(".local/state/zjp")).unwrap();
-    fs::write(env.home.join(".local/state/zjp/previous"), "other\n").unwrap();
+    fs::create_dir_all(env.home.join(".local/state/noren")).unwrap();
+    fs::write(env.home.join(".local/state/noren/previous"), "other\n").unwrap();
 
     let (out, _, ok) = env.run_env(
         &["discard"],
@@ -561,7 +629,7 @@ esac"#,
         assert!(ok, "snapshot failed: {out} {err}");
         assert!(out.starts_with("snapshot: "), "got: {out}");
     }
-    let dir = env.home.join(".local/state/zjp/snapshots/foo");
+    let dir = env.home.join(".local/state/noren/snapshots/foo");
     let mut files: Vec<_> = fs::read_dir(&dir)
         .unwrap()
         .map(|e| e.unwrap().path())
@@ -595,7 +663,7 @@ fn snapshot_of_exited_session_uses_resurrection_cache() {
 
     let (out, _, ok) = env.run(&["snapshot", "ghost"]);
     assert!(ok, "got: {out}");
-    let dir = env.home.join(".local/state/zjp/snapshots/ghost");
+    let dir = env.home.join(".local/state/noren/snapshots/ghost");
     assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
 
     // Identical content doesn't pile up a duplicate snapshot.
@@ -608,7 +676,7 @@ fn snapshot_of_exited_session_uses_resurrection_cache() {
 fn restore_outside_execs_new_session_with_snapshot_layout() {
     let env = Env::new();
     env.stub_zellij_logging();
-    let dir = env.home.join(".local/state/zjp/snapshots/foo");
+    let dir = env.home.join(".local/state/noren/snapshots/foo");
     fs::create_dir_all(&dir).unwrap();
     let snap = dir.join("20260713-090000.kdl");
     fs::write(&snap, "layout { }\n").unwrap();
@@ -641,7 +709,7 @@ esac"#,
 
     let (_, _, ok) = env.run_env(&["connect", "foo"], &[("ZELLIJ", "1")]);
     assert!(ok);
-    let dir = env.home.join(".local/state/zjp/snapshots/foo");
+    let dir = env.home.join(".local/state/noren/snapshots/foo");
     assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
 }
 

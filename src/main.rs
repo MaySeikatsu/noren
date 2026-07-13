@@ -21,6 +21,7 @@ use cli::{Cli, Cmd};
 use config::Config;
 
 fn main() -> anyhow::Result<()> {
+    state::migrate_legacy();
     let cli = Cli::parse();
     match cli.cmd {
         None | Some(Cmd::Picker) => picker::picker(&Config::load()),
