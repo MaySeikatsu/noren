@@ -110,6 +110,32 @@ echo "old [Created 2days ago] (EXITED - attach to resurrect)""#,
 }
 
 #[test]
+fn list_zellij_marks_attached_sessions() {
+    let env = Env::new();
+    // `att` has a client attached, `bg` runs in the background. The stub only
+    // answers list-clients with the real header for `att`.
+    env.stub(
+        "zellij",
+        r#"case "$1" in
+  list-sessions)
+    echo "att [Created 1h ago]"
+    echo "bg [Created 1h ago]";;
+  action)
+    echo "CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND"
+    if [ "$ZELLIJ_SESSION_NAME" = "att" ]; then
+      echo "1         terminal_0     N/A"
+    fi;;
+esac"#,
+    );
+    env.stub("zoxide", "exit 0");
+    let (out, _, ok) = env.run(&["list", "zellij"]);
+    assert!(ok);
+    let lines: Vec<&str> = out.trim_end().split('\n').collect();
+    assert_eq!(lines[0], "zellij\tatt\t\tlive\t▣ att");
+    assert_eq!(lines[1], "zellij\tbg\t\tlive\t▢ bg");
+}
+
+#[test]
 fn list_all_merges_sorts_dedupes_and_blacklists() {
     let env = Env::new();
     env.stub(
@@ -490,15 +516,20 @@ fi"#,
 #[test]
 fn snapshot_dumps_live_layout_and_prunes_to_keep() {
     let env = Env::new();
-    // dump-layout output changes each call (counter file) so snapshots differ.
+    // dump-layout output changes each call (counter file) so snapshots differ;
+    // list-clients (attached indicator) answers separately and must not bump it.
     env.stub(
         "zellij",
         r#"case "$1" in
   list-sessions) echo "foo [Created 1h ago]";;
   action)
-    n=$(cat "$HOME/n" 2>/dev/null || echo 0)
-    echo $((n + 1)) > "$HOME/n"
-    echo "layout { cwd \"/tmp\" } // v$n";;
+    if [ "$2" = "dump-layout" ]; then
+      n=$(cat "$HOME/n" 2>/dev/null || echo 0)
+      echo $((n + 1)) > "$HOME/n"
+      echo "layout { cwd \"/tmp\" } // v$n"
+    else
+      echo "CLIENT_ID ZELLIJ_PANE_ID RUNNING_COMMAND"
+    fi;;
 esac"#,
     );
     fs::create_dir_all(env.home.join(".config/zjp")).unwrap();

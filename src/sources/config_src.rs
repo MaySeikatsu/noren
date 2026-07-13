@@ -24,7 +24,7 @@ pub fn config_sessions(cfg: &Config) -> Vec<Row> {
                 path: p,
                 state: "config",
                 pinned: false,
-                icon: cfg.icon_for("config", "config", false),
+                icon: cfg.icon_for("config", "config", false, false),
             }
         })
         .collect()

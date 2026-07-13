@@ -37,9 +37,15 @@ blacklist = ["scratch", "junk"]
 # 1 = basename only ("nixos"), 2 = "parent/child" ("dotfiles/nixos"), etc.
 dir_length = 1
 
-# Show icons in the picker: 📁 dir, ▢ live session, ⊗ exited, ⚙ config,
+# Show icons in the picker: 📁 dir, ▣ live session shown in a terminal right
+# now, ▢ live session running in the background, ⊗ exited, ⚙ config,
 # 📌 prefix on pinned sessions. Default: true.
 icons = true
+
+# ▣/▢ distinction (detecting attached terminals) costs one parallel
+# `zellij action list-clients` round trip (~150-250ms) at picker startup.
+# Set false for the instant (~20ms) list; live sessions then all show ▢.
+attached_indicator = true
 
 # ---- Snapshots ----------------------------------------------------------------
 # `zjp3 snapshot [name]` stores a point-in-time copy of the session's layout

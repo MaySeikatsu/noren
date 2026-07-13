@@ -20,6 +20,7 @@ pub struct Config {
     pub icons: bool,
     pub snapshot_keep: usize,
     pub auto_snapshot_pinned: bool,
+    pub attached_indicator: bool,
     pub default_session: DefaultSession,
     pub session: Vec<SessionEntry>,
     pub wildcard: Vec<WildcardEntry>,
@@ -47,6 +48,10 @@ impl Default for Config {
             snapshot_keep: 5,
             // Auto-snapshot pinned sessions on pin and on connect.
             auto_snapshot_pinned: false,
+            // ▣ vs ▢ for live sessions with/without an attached terminal.
+            // Costs ~150-250ms picker startup (one parallel list-clients round
+            // trip); false restores the ~20ms instant list.
+            attached_indicator: true,
             default_session: DefaultSession::default(),
             session: vec![],
             wildcard: vec![],
@@ -131,18 +136,18 @@ impl Config {
     }
 
     /// Icon column for a row. Empty strings when icons are disabled.
-    pub fn icon_for(&self, source: &str, state: &str, pinned: bool) -> String {
+    /// `attached` only applies to live zellij sessions: ▣ = shown in a
+    /// terminal right now, ▢ = running in the background.
+    pub fn icon_for(&self, source: &str, state: &str, pinned: bool, attached: bool) -> String {
         if !self.icons {
             return String::new();
         }
         let base = match source {
-            "zellij" => {
-                if state == "live" {
-                    "▢ "
-                } else {
-                    "⊗ "
-                }
-            }
+            "zellij" => match (state, attached) {
+                ("live", true) => "▣ ",
+                ("live", false) => "▢ ",
+                _ => "⊗ ",
+            },
             "zoxide" => "📁 ",
             "config" => "⚙ ",
             _ => "",
@@ -282,11 +287,12 @@ mod tests {
     #[test]
     fn icons_toggle() {
         let mut cfg = Config::default();
-        assert_eq!(cfg.icon_for("zellij", "live", true), "📌 ▢ ");
-        assert_eq!(cfg.icon_for("zellij", "exited", false), "⊗ ");
-        assert_eq!(cfg.icon_for("zoxide", "dir", false), "📁 ");
-        assert_eq!(cfg.icon_for("config", "config", false), "⚙ ");
+        assert_eq!(cfg.icon_for("zellij", "live", true, false), "📌 ▢ ");
+        assert_eq!(cfg.icon_for("zellij", "live", false, true), "▣ ");
+        assert_eq!(cfg.icon_for("zellij", "exited", false, false), "⊗ ");
+        assert_eq!(cfg.icon_for("zoxide", "dir", false, false), "📁 ");
+        assert_eq!(cfg.icon_for("config", "config", false, false), "⚙ ");
         cfg.icons = false;
-        assert_eq!(cfg.icon_for("zellij", "live", true), "");
+        assert_eq!(cfg.icon_for("zellij", "live", true, true), "");
     }
 }

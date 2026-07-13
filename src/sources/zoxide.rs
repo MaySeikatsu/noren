@@ -26,7 +26,7 @@ pub fn zoxide_dirs(cfg: &Config) -> Vec<Row> {
                 path: p.to_string(),
                 state: "dir",
                 pinned,
-                icon: cfg.icon_for("zoxide", "dir", pinned),
+                icon: cfg.icon_for("zoxide", "dir", pinned, false),
             }
         })
         .collect()
