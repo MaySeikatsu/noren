@@ -1,5 +1,5 @@
 {
-  description = "zjp3 - sesh-parity zellij session manager (Rust)";
+  description = "noren - sesh-parity zellij session manager (Rust)";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
@@ -11,8 +11,8 @@
       f nixpkgs.legacyPackages.${system});
   in {
     packages = forAllSystems (pkgs: rec {
-      zjp3 = pkgs.callPackage ./default.nix { };
-      default = zjp3;
+      noren = pkgs.callPackage ./default.nix { };
+      default = noren;
     });
 
     devShells = forAllSystems (pkgs: {

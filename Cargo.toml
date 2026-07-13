@@ -1,5 +1,5 @@
 [package]
-name = "zjp3"
+name = "noren"
 version = "0.1.0"
 edition = "2024"
 description = "Sesh-parity zellij session picker (Rust)"

@@ -32,7 +32,7 @@ fn main() -> anyhow::Result<()> {
         Some(Cmd::Last) => {
             let prev = state::read_last();
             if prev.is_empty() {
-                eprintln!("zjp3 last: no previous session recorded yet");
+                eprintln!("noren last: no previous session recorded yet");
                 std::process::exit(1);
             }
             connect::session_connect(&Config::load(), &prev)
@@ -50,7 +50,7 @@ fn main() -> anyhow::Result<()> {
                 .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
                 .unwrap_or_default();
             if top.is_empty() {
-                eprintln!("zjp3 root: {} is not inside a git repository", p.display());
+                eprintln!("noren root: {} is not inside a git repository", p.display());
                 std::process::exit(1);
             }
             connect::session_connect(&Config::load(), &top)
@@ -168,7 +168,7 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// `zjp3 resolve <target> --format=env|json` for shell consumers
+/// `noren resolve <target> --format=env|json` for shell consumers
 /// (zellij-autostart evals the env form).
 fn resolve_cmd(cfg: &Config, target: &str, format: &str) {
     let r = connect::resolve(cfg, target);

@@ -1,8 +1,9 @@
-# zjp3 configuration example.
+# noren configuration example.
 #
-# Copy this file to `config.toml` in the same directory (~/.config/zjp/) and
-# edit as you like. zjp3 works without a config file (all-source picker with
-# defaults); this file is for adding [[session]] shortcuts, [[wildcard]] rules,
+# Copy this file to ~/.config/noren/config.toml and edit as you like
+# (the legacy ~/.config/zjp/config.toml is still read as a fallback).
+# noren works without a config file (all-source picker with defaults);
+# this file is for adding [[session]] shortcuts, [[wildcard]] rules,
 # blacklists, and per-project preview/startup/layout hooks.
 
 # ---- Global -----------------------------------------------------------------
@@ -31,7 +32,7 @@ pinned_dirs_with_sessions = false
 # and falls back to text when it can't render.
 preview_mode = "visual"
 
-# Names to hide from the picker. `zjp3 list blacklist` shows only these.
+# Names to hide from the picker. `noren list blacklist` shows only these.
 blacklist = ["scratch", "junk"]
 
 # 1 = basename only ("nixos"), 2 = "parent/child" ("dotfiles/nixos"), etc.
@@ -48,9 +49,9 @@ icons = true
 attached_indicator = true
 
 # ---- Snapshots ----------------------------------------------------------------
-# `zjp3 snapshot [name]` stores a point-in-time copy of the session's layout
-# under ~/.local/state/zjp/snapshots/<name>/; `zjp3 restore <name> [index]`
-# recreates the session from one (1 = newest, see `zjp3 snapshots`).
+# `noren snapshot [name]` stores a point-in-time copy of the session's layout
+# under ~/.local/state/zjp/snapshots/<name>/; `noren restore <name> [index]`
+# recreates the session from one (1 = newest, see `noren snapshots`).
 
 # How many snapshots to keep per session (oldest are pruned).
 snapshot_keep = 5
@@ -90,7 +91,7 @@ preview_command = "ls -la {}"
 
 # ---- Wildcard rules ---------------------------------------------------------
 # Match paths by glob. First match wins. `**` = recursive; `*` = one segment.
-# Applied to zoxide entries and to `zjp3 connect <path>` invocations.
+# Applied to zoxide entries and to `noren connect <path>` invocations.
 
 [[wildcard]]
 pattern         = "~/Documents/projects/rust/*"

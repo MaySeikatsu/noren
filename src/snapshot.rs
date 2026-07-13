@@ -131,27 +131,27 @@ fn current_or(name: Option<&str>) -> String {
         .unwrap_or_else(|| std::env::var("ZELLIJ_SESSION_NAME").unwrap_or_default())
 }
 
-/// `zjp3 snapshot [name]` — default: current session.
+/// `noren snapshot [name]` — default: current session.
 pub fn snapshot_cmd(cfg: &Config, name: Option<&str>) {
     let name = current_or(name);
     if name.is_empty() {
-        eprintln!("zjp3 snapshot: no name given and not inside a zellij session");
+        eprintln!("noren snapshot: no name given and not inside a zellij session");
         std::process::exit(1);
     }
     match take_snapshot(cfg, &name) {
         Ok(f) => println!("snapshot: {}", f.display()),
         Err(e) => {
-            eprintln!("zjp3 snapshot: {e}");
+            eprintln!("noren snapshot: {e}");
             std::process::exit(1);
         }
     }
 }
 
-/// `zjp3 snapshots [name]` — newest first, 1-based (restore takes the index).
+/// `noren snapshots [name]` — newest first, 1-based (restore takes the index).
 pub fn snapshots_cmd(name: Option<&str>) {
     let name = current_or(name);
     if name.is_empty() {
-        eprintln!("zjp3 snapshots: no name given and not inside a zellij session");
+        eprintln!("noren snapshots: no name given and not inside a zellij session");
         std::process::exit(1);
     }
     let snaps = list_snapshots(&name);
@@ -166,7 +166,7 @@ pub fn snapshots_cmd(name: Option<&str>) {
     }
 }
 
-/// `zjp3 restore <name> [index]` — kill + recreate the session from snapshot
+/// `noren restore <name> [index]` — kill + recreate the session from snapshot
 /// `index` (1 = newest). The pre-restore state is snapshotted first, so a
 /// mistaken restore can itself be restored from.
 pub fn restore_cmd(cfg: &Config, name: &str, index: usize, force: bool) -> anyhow::Result<()> {

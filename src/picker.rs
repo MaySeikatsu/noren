@@ -13,15 +13,25 @@ use crate::sources::{Selection, collect, rows_to_tsv};
 const HEADER: &str =
     "^t sessions  ^z dirs  ^c config  ^a all  ^p pin  ^d kill  ^alt-d delete  ^r reload";
 
+/// The binary fzf binds re-exec. current_exe keeps the picker working when
+/// noren isn't on PATH (cargo target dir, nix result/).
+fn self_exe() -> String {
+    std::env::current_exe()
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "noren".to_string())
+}
+
 pub fn picker(cfg: &Config) -> anyhow::Result<()> {
     let rows = collect(cfg, Selection::all());
     let tsv = rows_to_tsv(&rows);
     if tsv.is_empty() {
-        eprintln!("zjp3: no sessions, no zoxide dirs, no config entries");
+        eprintln!("noren: no sessions, no zoxide dirs, no config entries");
         return Ok(());
     }
 
     // Every reload/pin/kill bind re-execs this binary; startup is instant.
+    let exe = self_exe();
     let mut child = Command::new("fzf")
         .args([
             "--ansi",
@@ -35,30 +45,30 @@ pub fn picker(cfg: &Config) -> anyhow::Result<()> {
             "--header",
             HEADER,
             "--bind",
-            "ctrl-t:reload(zjp3 list zellij)+change-prompt(▢  )",
+            &format!("ctrl-t:reload({exe} list zellij)+change-prompt(▢  )"),
             "--bind",
-            "ctrl-z:reload(zjp3 list zoxide)+change-prompt(📁  )",
+            &format!("ctrl-z:reload({exe} list zoxide)+change-prompt(📁  )"),
             "--bind",
-            "ctrl-c:reload(zjp3 list config)+change-prompt(⚙  )",
+            &format!("ctrl-c:reload({exe} list config)+change-prompt(⚙  )"),
             "--bind",
-            "ctrl-a:reload(zjp3 list all)+change-prompt(⚡  )",
+            &format!("ctrl-a:reload({exe} list all)+change-prompt(⚡  )"),
             "--bind",
-            "ctrl-r:reload(zjp3 list all)",
+            &format!("ctrl-r:reload({exe} list all)"),
             "--bind",
-            "ctrl-p:execute-silent(zjp3 pin-row {})+reload(zjp3 list all)",
+            &format!("ctrl-p:execute-silent({exe} pin-row {{}})+reload({exe} list all)"),
             "--bind",
-            "ctrl-d:execute-silent(zjp3 kill {2})+reload(zjp3 list all)",
+            &format!("ctrl-d:execute-silent({exe} kill {{2}})+reload({exe} list all)"),
             "--bind",
-            "ctrl-alt-d:execute(zjp3 delete {2})+reload(zjp3 list all)",
+            &format!("ctrl-alt-d:execute({exe} delete {{2}})+reload({exe} list all)"),
             "--preview",
-            "zjp3 preview {}",
+            &format!("{exe} preview {{}}"),
             "--preview-window",
             "right,60%",
         ])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
-        .context("zjp3: failed to spawn fzf (is it on PATH?)")?;
+        .context("noren: failed to spawn fzf (is it on PATH?)")?;
 
     child
         .stdin

@@ -186,7 +186,7 @@ pub fn rows_to_tsv(rows: &[Row]) -> String {
         .join("\n")
 }
 
-/// `zjp3 list <word>` — print rows for the selected source(s).
+/// `noren list <word>` — print rows for the selected source(s).
 pub fn list_cmd(cfg: &Config, word: &str) {
     let rows = collect(cfg, parse_source(word));
     println!("{}", rows_to_tsv(&rows));

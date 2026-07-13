@@ -1,8 +1,8 @@
-//! `zjp3 completions <shell>` — clap-generated completions for
+//! `noren completions <shell>` — clap-generated completions for
 //! fish/zsh/bash/nushell, post-processed so session-taking arguments
 //! complete **session names** (live/exited + config entries) instead of
 //! falling back to file paths. Candidates are queried live from
-//! `zjp3 list` at completion time (~20 ms).
+//! `noren list` at completion time (~20 ms).
 
 use clap::CommandFactory;
 use clap_complete::{Generator, generate};
@@ -10,7 +10,7 @@ use clap_complete::{Generator, generate};
 fn generate_to_string(generator: impl Generator) -> String {
     let mut cmd = crate::cli::Cli::command();
     let mut buf = Vec::new();
-    generate(generator, &mut cmd, "zjp3", &mut buf);
+    generate(generator, &mut cmd, "noren", &mut buf);
     String::from_utf8(buf).unwrap_or_default()
 }
 
@@ -24,7 +24,7 @@ pub fn completions_cmd(shell: &str) {
         }
         "nushell" | "nu" => print!("{}", nushell_with_sessions()),
         other => {
-            eprintln!("zjp3 completions: unknown shell \"{other}\" (fish|zsh|bash|nushell)");
+            eprintln!("noren completions: unknown shell \"{other}\" (fish|zsh|bash|nushell)");
             std::process::exit(1);
         }
     }
@@ -34,13 +34,13 @@ pub fn completions_cmd(shell: &str) {
 // short display name would create a wrong session in $PWD, and flooding the
 // candidates with paths buries the sessions. Paths can still be typed.
 const FISH_DYNAMIC: &str = r#"
-# ---- zjp3 dynamic completions (appended after clap's static set) ----
-function __zjp3_sessions
-    command zjp3 list zellij 2>/dev/null | string split -f2 \t | string match -rv '^$'
-    command zjp3 list config 2>/dev/null | string split -f2 \t | string match -rv '^$'
+# ---- noren dynamic completions (appended after clap's static set) ----
+function __noren_sessions
+    command noren list zellij 2>/dev/null | string split -f2 \t | string match -rv '^$'
+    command noren list config 2>/dev/null | string split -f2 \t | string match -rv '^$'
 end
-complete -c zjp3 -n __fish_use_subcommand -f -a '(__zjp3_sessions)'
-complete -c zjp3 -n '__fish_seen_subcommand_from connect kill delete pin discard snapshot snapshots restore resolve' -f -a '(__zjp3_sessions)'
+complete -c noren -n __fish_use_subcommand -f -a '(__noren_sessions)'
+complete -c noren -n '__fish_seen_subcommand_from connect kill delete pin discard snapshot snapshots restore resolve' -f -a '(__noren_sessions)'
 "#;
 
 /// clap's zsh output completes positionals with `_default` (files). Swap the
@@ -49,17 +49,17 @@ complete -c zjp3 -n '__fish_seen_subcommand_from connect kill delete pin discard
 fn zsh_with_sessions() -> String {
     let out = generate_to_string(clap_complete::Shell::Zsh);
     let func = r#"
-_zjp3_sessions() {
+_noren_sessions() {
     local -a sessions
-    sessions=(${(f)"$(command zjp3 list zellij 2>/dev/null | cut -f2)"})
-    sessions+=(${(f)"$(command zjp3 list config 2>/dev/null | cut -f2)"})
+    sessions=(${(f)"$(command noren list zellij 2>/dev/null | cut -f2)"})
+    sessions+=(${(f)"$(command noren list config 2>/dev/null | cut -f2)"})
     _describe -t sessions 'zellij session' sessions
 }
 "#;
     let out = out
-        .replace("':target:_default'", "':target:_zjp3_sessions'")
-        .replace("':name:_default'", "':name:_zjp3_sessions'")
-        .replace("'::name:_default'", "'::name:_zjp3_sessions'");
+        .replace("':target:_default'", "':target:_noren_sessions'")
+        .replace("':name:_default'", "':name:_noren_sessions'")
+        .replace("'::name:_default'", "'::name:_noren_sessions'");
     // Inject the helper right after the `#compdef` line.
     match out.split_once('\n') {
         Some((first, rest)) => format!("{first}\n{func}\n{rest}"),
@@ -73,10 +73,10 @@ _zjp3_sessions() {
 fn nushell_with_sessions() -> String {
     let out = generate_to_string(clap_complete_nushell::Nushell);
     let func = r#"
-  def "nu-complete zjp3 sessions" [] {
-    ^zjp3 list zellij err> /dev/null
+  def "nu-complete noren sessions" [] {
+    ^noren list zellij err> /dev/null
     | lines
-    | append (^zjp3 list config err> /dev/null | lines)
+    | append (^noren list config err> /dev/null | lines)
     | each {|l| $l | split row "\t" | get 1 }
   }
 "#;
@@ -87,14 +87,14 @@ fn nushell_with_sessions() -> String {
     )
     .replace(
         "    target: string\n",
-        "    target: string@\"nu-complete zjp3 sessions\"\n",
+        "    target: string@\"nu-complete noren sessions\"\n",
     )
     .replace(
         "    name: string\n",
-        "    name: string@\"nu-complete zjp3 sessions\"\n",
+        "    name: string@\"nu-complete noren sessions\"\n",
     )
     .replace(
         "    name?: string\n",
-        "    name?: string@\"nu-complete zjp3 sessions\"\n",
+        "    name?: string@\"nu-complete noren sessions\"\n",
     )
 }

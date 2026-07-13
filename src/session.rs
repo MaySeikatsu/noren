@@ -19,14 +19,14 @@ fn maybe_snapshot(cfg: &Config, name: &str, new_state: &str) {
     }
 }
 
-/// `zjp3 pin [name]` — toggle; defaults to the current session.
+/// `noren pin [name]` — toggle; defaults to the current session.
 pub fn pin_cmd(cfg: &Config, name: Option<&str>) {
     let name = name
         .map(str::to_string)
         .filter(|n| !n.is_empty())
         .unwrap_or_else(current_session);
     if name.is_empty() {
-        eprintln!("zjp3 pin: no name given and not inside a zellij session");
+        eprintln!("noren pin: no name given and not inside a zellij session");
         std::process::exit(1);
     }
     let new_state = state::pin_toggle(&name);
@@ -34,8 +34,8 @@ pub fn pin_cmd(cfg: &Config, name: Option<&str>) {
     println!("{name}: {new_state}");
 }
 
-/// `zjp3 pin-row <tsv-line>` — picker-internal pin toggle on a whole row:
-/// sessions pin by name (shared file), dirs pin by path (zjp3-owned file),
+/// `noren pin-row <tsv-line>` — picker-internal pin toggle on a whole row:
+/// sessions pin by name (shared file), dirs pin by path (noren-owned file),
 /// anything else (config rows, the separator) is a no-op.
 pub fn pin_row(cfg: &Config, line: &str) {
     let mut parts = line.split('\t');
@@ -56,15 +56,15 @@ pub fn pin_row(cfg: &Config, line: &str) {
     }
 }
 
-/// `zjp3 rename <new>` — rename the current session, carry the pin over.
+/// `noren rename <new>` — rename the current session, carry the pin over.
 pub fn rename_current(new: &str) {
     let old = current_session();
     if old.is_empty() {
-        eprintln!("zjp3 rename: not inside a zellij session");
+        eprintln!("noren rename: not inside a zellij session");
         std::process::exit(1);
     }
     if new.is_empty() || new == old {
-        eprintln!("zjp3 rename: new name must differ from current");
+        eprintln!("noren rename: new name must differ from current");
         std::process::exit(1);
     }
     // Sanitize to match zellij-autostart's rules; keep the raw name if the
@@ -82,7 +82,7 @@ pub fn rename_current(new: &str) {
     match status {
         Ok(s) if s.success() => {}
         _ => {
-            eprintln!("zjp3 rename: zellij action rename-session failed");
+            eprintln!("noren rename: zellij action rename-session failed");
             std::process::exit(1);
         }
     }

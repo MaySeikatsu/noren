@@ -5,8 +5,8 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
-    name = "zjp3",
-    about = "zjp3 - zellij session picker (sesh parity, Rust)",
+    name = "noren",
+    about = "noren - zellij session picker (sesh parity, Rust)",
     disable_help_subcommand = false
 )]
 pub struct Cli {

@@ -1,6 +1,7 @@
-//! Config loader for ~/.config/zjp/config.toml.
-//! Schema parity with zjp2 (see config.toml.example); missing keys fall back
-//! to defaults, a malformed file warns on stderr and uses defaults.
+//! Config loader for ~/.config/noren/config.toml (falling back to the
+//! pre-rename ~/.config/zjp/config.toml, still shared with zjp2 during the
+//! bake-off). Schema parity with zjp2 (see config.toml.example); missing
+//! keys fall back to defaults, a malformed file warns and uses defaults.
 
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -44,7 +45,7 @@ impl Default for Config {
             blacklist: vec![],
             dir_length: 1,
             icons: true,
-            // Snapshots per session (`zjp3 snapshot`); oldest pruned beyond this.
+            // Snapshots per session (`noren snapshot`); oldest pruned beyond this.
             snapshot_keep: 5,
             // Auto-snapshot pinned sessions on pin and on connect.
             auto_snapshot_pinned: false,
@@ -87,6 +88,10 @@ pub struct WildcardEntry {
 }
 
 fn config_path() -> PathBuf {
+    let preferred = home_dir().join(".config/noren/config.toml");
+    if preferred.exists() {
+        return preferred;
+    }
     home_dir().join(".config/zjp/config.toml")
 }
 
@@ -100,7 +105,7 @@ impl Config {
             Ok(cfg) => cfg,
             Err(_) => {
                 eprintln!(
-                    "zjp3: warning: failed to parse {}, using defaults",
+                    "noren: warning: failed to parse {}, using defaults",
                     p.display()
                 );
                 Config::default()

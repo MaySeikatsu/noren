@@ -1,5 +1,5 @@
 //! On-disk state, SHARED with sibling shell scripts — formats are contracts:
-//!   ~/.local/state/zjp/last, ~/.local/state/zjp/previous  (zjp3-owned)
+//!   ~/.local/state/zjp/last, ~/.local/state/zjp/previous  (noren-owned)
 //!   ~/.local/state/zellij/pinned          (shared with zpin/zunpin/sn/reaper)
 //!   ~/.local/state/zellij/current-session (pin-indicator fallback)
 
@@ -33,7 +33,7 @@ pub fn record_last(name: &str) {
     let _ = fs::write(last_file(), name);
 }
 
-/// The session to jump back to with `zjp3 last`.
+/// The session to jump back to with `noren last`.
 pub fn read_last() -> String {
     fs::read_to_string(previous_file())
         .map(|s| s.trim().to_string())
@@ -42,7 +42,7 @@ pub fn read_last() -> String {
 
 // ---- pin files ---------------------------------------------------------------
 // Session pins are SHARED with zpin/zunpin/sn/reaper (one name per line).
-// Dir pins are zjp3-owned (one path per line) — folders never enter the
+// Dir pins are noren-owned (one path per line) — folders never enter the
 // shared file, so the reaper and friends only ever see session names.
 
 fn pin_file() -> PathBuf {

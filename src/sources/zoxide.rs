@@ -1,5 +1,5 @@
 //! zoxide source: `zoxide query -l`, one row per known directory.
-//! Dir pins live in zjp3's own state file (paths), never the shared session
+//! Dir pins live in noren's own state file (paths), never the shared session
 //! pin file.
 
 use std::process::Command;

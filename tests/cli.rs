@@ -6,7 +6,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
 
-const BIN: &str = env!("CARGO_BIN_EXE_zjp3");
+const BIN: &str = env!("CARGO_BIN_EXE_noren");
 
 /// Isolated HOME + stub-bin dir prepended to PATH.
 struct Env {
@@ -54,7 +54,7 @@ impl Env {
         for (k, v) in extra_env {
             cmd.env(k, v);
         }
-        let out = cmd.output().expect("run zjp3");
+        let out = cmd.output().expect("run noren");
         (
             String::from_utf8_lossy(&out.stdout).into_owned(),
             String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -197,7 +197,7 @@ fn pin_row_pins_dirs_separately_and_sorts_them_first_in_dir_group() {
     let (out, _, ok) = env.run(&["pin-row", "zoxide\tbbb\t/tmp/bbb\tdir\t📁 bbb"]);
     assert!(ok);
     assert_eq!(out, "/tmp/bbb: pinned\n");
-    // Dir pins land in zjp3's own file, NOT the shared session pin file.
+    // Dir pins land in noren's own file, NOT the shared session pin file.
     let dirs = fs::read_to_string(env.home.join(".local/state/zjp/pinned-dirs")).unwrap();
     assert_eq!(dirs, "/tmp/bbb\n");
     assert!(!env.home.join(".local/state/zellij/pinned").exists());
@@ -210,7 +210,7 @@ fn pin_row_pins_dirs_separately_and_sorts_them_first_in_dir_group() {
     assert_eq!(lines[2], "zoxide\tbbb\t/tmp/bbb\tdir\t📌 📁 bbb");
     assert!(lines[3].starts_with("zoxide\taaa"));
 
-    // pin-row on a session row toggles the shared file, same as `zjp3 pin`.
+    // pin-row on a session row toggles the shared file, same as `noren pin`.
     let (out, _, _) = env.run(&["pin-row", "zellij\twork\t\tlive\t▢ work"]);
     assert_eq!(out, "work: pinned\n");
     let pins = fs::read_to_string(env.home.join(".local/state/zellij/pinned")).unwrap();
@@ -391,6 +391,23 @@ fn last_without_state_fails_cleanly() {
     let (_, err, ok) = env.run(&["last"]);
     assert!(!ok);
     assert!(err.contains("no previous session recorded yet"));
+}
+
+#[test]
+fn config_prefers_noren_dir_over_legacy_zjp() {
+    let env = Env::new();
+    env.stub("zellij", "exit 0");
+    env.stub("zoxide", "echo /tmp/x");
+    // Legacy config blacklists the dir; the noren config doesn't. The noren
+    // one must win.
+    fs::create_dir_all(env.home.join(".config/zjp")).unwrap();
+    fs::write(env.home.join(".config/zjp/config.toml"), "blacklist = [\"x\"]\n").unwrap();
+    fs::create_dir_all(env.home.join(".config/noren")).unwrap();
+    fs::write(env.home.join(".config/noren/config.toml"), "icons = false\n").unwrap();
+
+    let (out, _, ok) = env.run(&["list", "zoxide"]);
+    assert!(ok);
+    assert_eq!(out, "zoxide\tx\t/tmp/x\tdir\tx\n");
 }
 
 #[test]
@@ -633,28 +650,28 @@ fn completions_cover_all_shells_and_fish_is_dynamic() {
     let env = Env::new();
     let (out, _, ok) = env.run(&["completions", "fish"]);
     assert!(ok);
-    assert!(out.contains("complete -c zjp3"), "got: {out}");
-    assert!(out.contains("__zjp3_sessions"), "got: {out}");
+    assert!(out.contains("complete -c noren"), "got: {out}");
+    assert!(out.contains("__noren_sessions"), "got: {out}");
     // Sessions only: no dir-path candidates in the dynamic set.
     assert!(!out.contains("list zoxide"), "got: {out}");
 
     let (out, _, ok) = env.run(&["completions", "zsh"]);
     assert!(ok);
-    assert!(out.starts_with("#compdef zjp3"), "got: {out}");
-    assert!(out.contains("_zjp3_sessions"), "got: {out}");
-    assert!(out.contains("':name:_zjp3_sessions'"), "got: {out}");
+    assert!(out.starts_with("#compdef noren"), "got: {out}");
+    assert!(out.contains("_noren_sessions"), "got: {out}");
+    assert!(out.contains("':name:_noren_sessions'"), "got: {out}");
     // Path positionals keep file completion.
     assert!(out.contains("':path:_default'"), "got: {out}");
 
     let (out, _, ok) = env.run(&["completions", "bash"]);
     assert!(ok);
-    assert!(out.contains("zjp3"), "got: {out}");
+    assert!(out.contains("noren"), "got: {out}");
 
     let (out, _, ok) = env.run(&["completions", "nushell"]);
     assert!(ok);
     assert!(out.contains("export extern"), "got: {out}");
     assert!(
-        out.contains("name: string@\"nu-complete zjp3 sessions\""),
+        out.contains("name: string@\"nu-complete noren sessions\""),
         "got: {out}"
     );
 

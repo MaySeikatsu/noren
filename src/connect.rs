@@ -229,7 +229,7 @@ pub fn session_connect(cfg: &Config, target: &str) -> anyhow::Result<()> {
     }
 }
 
-/// `zjp3 discard [name]` — "close tab" for sessions: switch this client to
+/// `noren discard [name]` — "close tab" for sessions: switch this client to
 /// the previous (or any other live) session first, then soft-kill the
 /// discarded one. The resurrection layout survives, exactly like `kill`.
 pub fn discard(cfg: &Config, name: Option<&str>) -> anyhow::Result<()> {
@@ -239,7 +239,7 @@ pub fn discard(cfg: &Config, name: Option<&str>) -> anyhow::Result<()> {
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| current.clone());
     if target.is_empty() {
-        anyhow::bail!("zjp3 discard: no name given and not inside a zellij session");
+        anyhow::bail!("noren discard: no name given and not inside a zellij session");
     }
 
     if inside_zellij() && target == current {
@@ -333,12 +333,12 @@ mod tests {
             }],
             ..Default::default()
         };
-        let dir = tmp.join("zjp3-test-wc");
+        let dir = tmp.join("noren-test-wc");
         std::fs::create_dir_all(&dir).unwrap();
         let r = resolve_with(&cfg, &dir.to_string_lossy(), &[]);
         assert_eq!(r.source, "wildcard");
         assert_eq!(r.layout, "ide");
-        assert_eq!(r.name, "zjp3-test-wc");
+        assert_eq!(r.name, "noren-test-wc");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! `zjp3 window` — list/switch/create tabs in a session (analog of
+//! `noren window` — list/switch/create tabs in a session (analog of
 //! `sesh window`, thin wrapper over `zellij action`).
 
 use std::process::Command;
@@ -39,7 +39,7 @@ pub fn window(target: Option<&str>, session_flag: Option<&str>) {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(current_session);
     if session.is_empty() {
-        eprintln!("zjp3 window: not inside a zellij session and no --session given");
+        eprintln!("noren window: not inside a zellij session and no --session given");
         std::process::exit(1);
     }
 
@@ -51,7 +51,7 @@ pub fn window(target: Option<&str>, session_flag: Option<&str>) {
     if is_pathlike(target) {
         let p = expand_path(target);
         if !p.exists() {
-            eprintln!("zjp3 window: path does not exist: {}", p.display());
+            eprintln!("noren window: path does not exist: {}", p.display());
             std::process::exit(1);
         }
         let name = p
