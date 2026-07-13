@@ -1,0 +1,89 @@
+# zjp3 configuration example.
+#
+# Copy this file to `config.toml` in the same directory (~/.config/zjp/) and
+# edit as you like. zjp3 works without a config file (all-source picker with
+# defaults); this file is for adding [[session]] shortcuts, [[wildcard]] rules,
+# blacklists, and per-project preview/startup/layout hooks.
+
+# ---- Global -----------------------------------------------------------------
+
+# Order groups appear in the picker. FIRST entry = closest to the fzf
+# prompt/text field; unknown values are appended at the far end.
+# Sessions get priority by default; folders come last.
+sort_order = ["zellij", "config", "zoxide"]
+
+# Order within the zellij group (again: first = closest to the prompt).
+# Subgroups: "pinned" (pinned sessions), "live" (running), "exited"
+# (dead, resurrectable).
+session_order = ["pinned", "live", "exited"]
+
+# Draw a light hairline between the session area and the folder area.
+separator = true
+
+# Pinned folders normally stay in the folder area (front of the dir group,
+# right at the hairline). Set true to slot them in next to the pinned
+# sessions instead.
+pinned_dirs_with_sessions = false
+
+# Session preview style: "visual" draws the pane layout as boxes labeled
+# with the running programs; "text" renders the compact tree. Visual mode
+# only reads the saved layout file — it never resurrects dead sessions —
+# and falls back to text when it can't render.
+preview_mode = "visual"
+
+# Names to hide from the picker. `zjp3 list blacklist` shows only these.
+blacklist = ["scratch", "junk"]
+
+# 1 = basename only ("nixos"), 2 = "parent/child" ("dotfiles/nixos"), etc.
+dir_length = 1
+
+# Show icons in the picker: 📁 dir, ▢ live session, ⊗ exited, ⚙ config,
+# 📌 prefix on pinned sessions. Default: true.
+icons = true
+
+# ---- Defaults applied when a session/wildcard doesn't override --------------
+
+[default_session]
+# Command run in a new pane the first time a session is created.
+# Empty = no startup command.
+startup_command = ""
+
+# Command used to render the preview pane when a specific one isn't set.
+# `{}` is substituted with the entry's path.
+preview_command = "eza --all --git --icons --color=always {}"
+
+# Zellij layout name (from ~/.config/zellij/layouts/<name>.kdl). Empty = default.
+layout = ""
+
+# ---- Explicit sessions ------------------------------------------------------
+# Match by `name` or `path`. Highest precedence.
+
+[[session]]
+name            = "nixos"
+path            = "~/.config/nixos"
+startup_command = "hx"
+preview_command = "bat --color=always {}/flake.nix"
+layout          = "ide-git"
+
+[[session]]
+name            = "downloads"
+path            = "~/Downloads"
+preview_command = "ls -la {}"
+
+# ---- Wildcard rules ---------------------------------------------------------
+# Match paths by glob. First match wins. `**` = recursive; `*` = one segment.
+# Applied to zoxide entries and to `zjp3 connect <path>` invocations.
+
+[[wildcard]]
+pattern         = "~/Documents/projects/rust/*"
+startup_command = "hx ."
+preview_command = "eza --tree --level=2 --color=always {}"
+layout          = "ide-git"
+
+[[wildcard]]
+pattern         = "~/Documents/cws/**"
+layout          = "ide"
+
+[[wildcard]]
+pattern         = "~/Projects/*"
+layout          = "ide"
