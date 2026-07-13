@@ -15,8 +15,8 @@ noren merges your **running zellij sessions**, **[zoxide](https://github.com/aje
 ```
 ⚡  nixos▏
    📌 ▣ nixos          ← pinned, open in a terminal right now   ┌─ preview ────────────┐
-   📌 ▢ shellseikatsu  ← pinned, running in the background      │ ┏━━━━━━━┓┌─────────┐ │
-   ▣ hestia_tauri                                               │ ┃ hx  * ┃│ cargo   │ │
+   📌 ▢ quickshell  ← pinned, running in the background         │ ┏━━━━━━━┓┌─────────┐ │
+   ▣ projects                                                   │ ┃ hx  * ┃│ cargo   │ │
    ⊗ old-experiment    ← dead, resurrectable                    │ ┗━━━━━━━┛└─────────┘ │
    ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌                                           │ (+ 1 floating)       │
    ⚙ dotfiles          ← from config.toml                       └──────────────────────┘
@@ -149,22 +149,24 @@ Zellij keybinds, home-manager module examples, shell bindings, completions, and 
 - **Snapshots capture what zellij serializes** — layout, cwds, running commands — not in-program state. Restore relaunches the commands.
 - **Multi-client caveat:** when two terminals show the same session, switching from inside moves the *oldest* attached client (zellij CLI calls carry no client identity). The ▣ indicator exists so you see shared sessions before joining them.
 
-## Inspiration & similar projects
+## AI use
 
-- **[sesh](https://github.com/joshmedeski/sesh)** by Josh Medeski — the blueprint. noren started as "sesh, but for zellij" and still follows its CLI shape and philosophy.
-- **[zoxide](https://github.com/ajeetdsouza/zoxide)** and **[fzf](https://github.com/junegunn/fzf)** — the two tools doing the heavy lifting: frecent directories in, fuzzy selection out.
-- **[zellij-switch](https://github.com/mostafaqanbaryan/zellij-switch)** by Mostafa Qanbaryan — the WASM plugin that makes in-place session switching possible at all.
-
-If noren isn't your flavor, these solve the same problem differently:
-
-- [zesh](https://github.com/roberte777/zesh) — zellij + zoxide session manager, also sesh-inspired, Rust.
-- [zellij-sessionizer](https://github.com/cunialino/zellij-sessionizer) — minimal directory-based sessionizer.
-- [zism](https://github.com/23prime/zism) — zellij interactive session manager.
-- zellij's built-in session-manager plugin (`Ctrl o w`) — no install, fewer sources, but as a resident plugin it can do per-client switching, which no external CLI can.
+AI was used to realise this project - two basic local prototypes were created previously that were nushell+python based hence the original "zjp3" naming. I'm happy you got here and found the project, please be aware that it was created as personal tooling and might contain bugs.
 
 ## Thanks
 
-Thanks to everyone who files issues, sends PRs, or tests noren on their setup — contributions of any size are welcome. Special thanks to the [zellij](https://github.com/zellij-org/zellij) maintainers for the serialization and pipe machinery this tool leans on.
+Thanks to everyone who files issues, sends PRs, or tests noren on their setup — contributions of any size are welcome. Special thanks to the [zellij](https://github.com/zellij-org/zellij) maintainers for the serialization and pipe machinery this tool leans on. And zoxide + fzf for building the foundation for this tool:
+- **[zoxide](https://github.com/ajeetdsouza/zoxide)** and **[fzf](https://github.com/junegunn/fzf)** — the two tools doing the heavy lifting: frecent directories in, fuzzy selection out.
+- **[zellij-switch](https://github.com/mostafaqanbaryan/zellij-switch)** by Mostafa Qanbaryan — the WASM plugin that makes in-place session switching possible at all.
+
+### Inspiration & similar projects
+
+- **[sesh](https://github.com/joshmedeski/sesh)** by Josh Medeski — the blueprint. noren started as "sesh, but for zellij" and still follows its CLI shape and philosophy.
+- **[zesh](https://github.com/roberte777/zesh)** — zellij + zoxide session manager, also sesh-inspired, Rust.
+- **[zellij-sessionizer](https://github.com/cunialino/zellij-sessionizer)** — minimal directory-based sessionizer.
+- **[zism](https://github.com/23prime/zism)** — zellij interactive session manager.
+- **zellij's built-in session-manager** plugin (`Ctrl o w`) — no install, fewer sources, but as a resident plugin it can do per-client switching, which no external CLI can.
+
 
 ## License
 
