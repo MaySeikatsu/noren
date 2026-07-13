@@ -1,11 +1,17 @@
 # noren (暖簾)
 
+<div align="center">
+   <img width="128" height="128<img width="128" height="1254" alt="noren" src="https://github.com/user-attachments/assets/4316da74-685f-4d22-8dfc-9faeeac7e78e" />
+</div>
+
+##
+
 **A sesh-style session manager for [zellij](https://zellij.dev). Brush through the curtain into any project.**
 
 A *noren* is the fabric curtain hanging in the doorway of a Japanese shop — you don't open it, you brush through it without breaking stride. That's the feel this tool is after: one keypress, a fuzzy match, and you're standing in another project.
 
-noren merges your **running zellij sessions**, **[zoxide](https://github.com/ajeetdsouza/zoxide) directories**, and **configured project entries** into a single [fzf](https://github.com/junegunn/fzf) picker, and connects to whatever you choose — attaching, creating, resurrecting, or switching in place as appropriate. Feature parity with [sesh](https://github.com/joshmedeski/sesh) (tmux), plus a few things sesh doesn't have.
 
+noren merges your **running zellij sessions**, **[zoxide](https://github.com/ajeetdsouza/zoxide) directories**, and **configured project entries** into a single [fzf](https://github.com/junegunn/fzf) picker, and connects to whatever you choose — attaching, creating, resurrecting, or switching in place as appropriate. Feature parity with [sesh](https://github.com/joshmedeski/sesh) (tmux), plus a few things sesh doesn't have.
 ```
 ⚡  nixos▏
    📌 ▣ nixos          ← pinned, open in a terminal right now   ┌─ preview ────────────┐
