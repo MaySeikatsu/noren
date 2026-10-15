@@ -372,6 +372,113 @@ pub fn render_session(name: &str) -> String {
     render_file(&session_layout_file(name))
 }
 
+// ---- Focus summary -------------------------------------------------------
+// "What was I doing there": the focused tab and pane from the focus markers
+// zellij serializes. Like everything here, cache-file only.
+
+#[derive(Debug, PartialEq)]
+pub struct FocusSummary {
+    pub tab: String,
+    /// Focused pane's command basename (or plugin name); empty = plain shell.
+    /// None when the tab carries no pane focus marker.
+    pub command: Option<String>,
+    /// Focused pane's cwd (tab's when no pane is focused), with relative
+    /// cwds resolved against their parents; may be empty.
+    pub cwd: String,
+}
+
+fn join_cwd(base: &Path, node: &Node) -> PathBuf {
+    match node.props.get("cwd").filter(|c| !c.is_empty()) {
+        Some(c) => base.join(c), // absolute c replaces base
+        None => base.to_path_buf(),
+    }
+}
+
+/// Depth-first search for the focused leaf pane, carrying the resolved cwd.
+fn focused_leaf<'a>(nodes: &[&'a Node], base: &Path) -> Option<(&'a Node, PathBuf)> {
+    first_leaf(nodes, base, true)
+}
+
+/// First non-status leaf pane (depth-first), optionally only a focused one.
+fn first_leaf<'a>(nodes: &[&'a Node], base: &Path, focused: bool) -> Option<(&'a Node, PathBuf)> {
+    for n in nodes {
+        let cwd = join_cwd(base, n);
+        let kids: Vec<&Node> = n.children.iter().filter(|c| c.name == "pane").collect();
+        if kids.is_empty() {
+            let hit = !focused || n.props.get("focus").map(String::as_str) == Some("true");
+            if !is_status_pane(n) && hit {
+                return Some((n, cwd));
+            }
+        } else if let Some(hit) = first_leaf(&kids, &cwd, focused) {
+            return Some(hit);
+        }
+    }
+    None
+}
+
+fn focus_summary(nodes: &[Node]) -> Option<FocusSummary> {
+    let layout = nodes.iter().find(|n| n.name == "layout")?;
+    let base: PathBuf = layout
+        .children
+        .iter()
+        .find(|c| c.name == "cwd" && !c.args.is_empty())
+        .map(|c| PathBuf::from(&c.args[0]))
+        .unwrap_or_default();
+    // Older/partial serializations carry no focus markers: fall back to
+    // the first tab and its first pane rather than showing nothing.
+    let tabs = || {
+        layout
+            .children
+            .iter()
+            .filter(|c| c.name == "tab")
+            .enumerate()
+    };
+    let (index, tab) = tabs()
+        .find(|(_, t)| t.props.get("focus").map(String::as_str) == Some("true"))
+        .or_else(|| tabs().next())?;
+    let name = tab
+        .props
+        .get("name")
+        .cloned()
+        .unwrap_or_else(|| format!("#{}", index + 1));
+    let tab_cwd = join_cwd(&base, tab);
+
+    let tiled: Vec<&Node> = tab.children.iter().filter(|c| c.name == "pane").collect();
+    let floating: Vec<&Node> = tab
+        .children
+        .iter()
+        .filter(|c| c.name == "floating_panes")
+        .flat_map(|f| f.children.iter().filter(|c| c.name == "pane"))
+        .collect();
+    let leaf = focused_leaf(&tiled, &tab_cwd)
+        .or_else(|| focused_leaf(&floating, &tab_cwd))
+        .or_else(|| first_leaf(&tiled, &tab_cwd, false));
+    let (command, cwd) = match leaf {
+        Some((pane, cwd)) => {
+            let cmd = basename_cmd(pane.props.get("command").map(String::as_str).unwrap_or(""));
+            let cmd = if cmd.is_empty() {
+                plugin_name(pane)
+            } else {
+                cmd
+            };
+            (Some(cmd), cwd)
+        }
+        None => (None, tab_cwd),
+    };
+    Some(FocusSummary {
+        tab: name,
+        command,
+        cwd: cwd.to_string_lossy().into_owned(),
+    })
+}
+
+/// Focus summary for a session's cached layout; None without a layout or
+/// without a focused tab.
+pub fn session_focus(name: &str) -> Option<FocusSummary> {
+    let src = std::fs::read(session_layout_file(name)).ok()?;
+    focus_summary(&parse(&String::from_utf8_lossy(&src)))
+}
+
 // ---- Visual (box-art) rendering ------------------------------------------
 // Draws the pane layout as nested boxes sized from the serialized layout —
 // a blueprint of the actual session (pane arrangement + running programs).
@@ -682,6 +789,77 @@ Tab 1: Tab #1  *
   └─ [status: zellij:compact-bar]
   (+ 1 floating)";
         assert_eq!(out, expected);
+    }
+
+    #[test]
+    fn focus_summary_from_fixture() {
+        let fixture = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/session-layout.kdl"
+        );
+        let src = std::fs::read_to_string(fixture).unwrap();
+        assert_eq!(
+            focus_summary(&parse(&src)),
+            Some(FocusSummary {
+                tab: "Tab #1".into(),
+                command: Some("claude".into()),
+                cwd: "/home/maike/.config/nixos".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn focus_summary_resolves_relative_cwds_through_parents() {
+        let src = r#"layout {
+    cwd "/home/u"
+    tab name="a" {
+        pane command="hx" focus=true
+    }
+    tab name="code" focus=true cwd="Projects" {
+        pane split_direction="vertical" cwd="noren" {
+            pane command="/bin/hx" cwd="src"
+            pane focus=true cwd="docs"
+        }
+        pane size=1 borderless=true {
+            plugin location="zellij:compact-bar"
+        }
+    }
+}
+"#;
+        assert_eq!(
+            focus_summary(&parse(src)),
+            Some(FocusSummary {
+                tab: "code".into(),
+                command: Some(String::new()),
+                cwd: "/home/u/Projects/noren/docs".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn focus_summary_falls_back_to_first_tab_and_pane() {
+        // No focus markers at all: first tab, first pane.
+        let src = "layout {\n cwd \"/x\"\n tab name=\"t\" {\n pane command=\"hx\"\n }\n}\n";
+        assert_eq!(
+            focus_summary(&parse(src)),
+            Some(FocusSummary {
+                tab: "t".into(),
+                command: Some("hx".into()),
+                cwd: "/x".into(),
+            })
+        );
+        // Focused tab without a pane marker: its first pane.
+        let src = "layout {\n cwd \"/x\"\n tab name=\"a\" {\n pane\n }\n tab focus=true cwd=\"/abs\" {\n pane command=\"hx\"\n }\n}\n";
+        assert_eq!(
+            focus_summary(&parse(src)),
+            Some(FocusSummary {
+                tab: "#2".into(),
+                command: Some("hx".into()),
+                cwd: "/abs".into(),
+            })
+        );
+        // No tabs: nothing to summarize.
+        assert_eq!(focus_summary(&parse("layout {\n}\n")), None);
     }
 
     #[test]

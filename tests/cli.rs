@@ -2,79 +2,10 @@
 //! on PATH and an isolated HOME.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::process::Command;
 
-const BIN: &str = env!("CARGO_BIN_EXE_noren");
-
-/// Isolated HOME + stub-bin dir prepended to PATH.
-struct Env {
-    _tmp: tempfile::TempDir,
-    home: std::path::PathBuf,
-    bin: std::path::PathBuf,
-}
-
-impl Env {
-    fn new() -> Self {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let home = tmp.path().join("home");
-        let bin = tmp.path().join("bin");
-        fs::create_dir_all(&home).unwrap();
-        fs::create_dir_all(&bin).unwrap();
-        Env {
-            home,
-            bin,
-            _tmp: tmp,
-        }
-    }
-
-    fn stub(&self, name: &str, script: &str) {
-        let p = self.bin.join(name);
-        fs::write(&p, format!("#!/bin/sh\n{script}\n")).unwrap();
-        fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
-    }
-
-    fn run(&self, args: &[&str]) -> (String, String, bool) {
-        self.run_env(args, &[])
-    }
-
-    fn run_env(&self, args: &[&str], extra_env: &[(&str, &str)]) -> (String, String, bool) {
-        let path = format!(
-            "{}:{}",
-            self.bin.display(),
-            std::env::var("PATH").unwrap_or_default()
-        );
-        let mut cmd = Command::new(BIN);
-        cmd.args(args)
-            .env("HOME", &self.home)
-            .env("PATH", path)
-            .env_remove("ZELLIJ")
-            .env_remove("ZELLIJ_SESSION_NAME");
-        for (k, v) in extra_env {
-            cmd.env(k, v);
-        }
-        let out = cmd.output().expect("run noren");
-        (
-            String::from_utf8_lossy(&out.stdout).into_owned(),
-            String::from_utf8_lossy(&out.stderr).into_owned(),
-            out.status.success(),
-        )
-    }
-
-    /// Stub zellij that appends its argv to $HOME/zellij-args.log.
-    fn stub_zellij_logging(&self) {
-        self.stub("zellij", "echo \"$@\" >> \"$HOME/zellij-args.log\"\nexit 0");
-    }
-
-    fn zellij_log(&self) -> Vec<String> {
-        fs::read_to_string(self.home.join("zellij-args.log"))
-            .unwrap_or_default()
-            .lines()
-            .map(str::to_string)
-            .collect()
-    }
-}
+mod common;
+use common::*;
 
 #[test]
 fn list_zoxide_uses_stubbed_binary() {
@@ -85,7 +16,8 @@ fn list_zoxide_uses_stubbed_binary() {
     assert!(ok);
     assert_eq!(
         out,
-        "zoxide\talpha\t/tmp/alpha\tdir\t📁 alpha\nzoxide\tbeta\t/tmp/beta\tdir\t📁 beta\n"
+        "zoxide\talpha\t/tmp/alpha\tdir\t📁 alpha \t\x1b[2m/tmp/alpha\x1b[0m\n\
+         zoxide\tbeta\t/tmp/beta\tdir\t📁 beta  \t\x1b[2m/tmp/beta\x1b[0m\n"
     );
 }
 
@@ -106,7 +38,8 @@ echo "old [Created 2days ago] (EXITED - attach to resurrect)""#,
     // First row sits next to the prompt: pinned, then live, then exited.
     let lines: Vec<&str> = out.trim_end().split('\n').collect();
     assert_eq!(lines[0], "zellij\twork\t\tlive\t📌 ▢ work");
-    assert_eq!(lines[1], "zellij\told\t\texited\t⊗ old");
+    // Icons right-align so names share a column with the pinned row.
+    assert_eq!(lines[1], "zellij\told\t\texited\t   ⊗ old");
 }
 
 #[test]
@@ -142,23 +75,46 @@ fn list_all_merges_sorts_dedupes_and_blacklists() {
         "zellij",
         "echo \"alpha [Created 1h ago]\"\necho \"junk [Created 1h ago]\"",
     );
-    env.stub("zoxide", "echo /tmp/alpha");
+    env.stub(
+        "zoxide",
+        "printf '%s\\n' /tmp/alpha /a/scratch /b/scratch /a/scratch/ /p/proj1 /p/keep",
+    );
     fs::create_dir_all(env.home.join(".config/zjp")).unwrap();
     fs::write(
         env.home.join(".config/zjp/config.toml"),
-        "blacklist = [\"junk\"]\n",
+        "blacklist = [\"junk\", \"scratch\", \"/p/proj*\"]\n",
     )
     .unwrap();
 
+    // (source, name, path) — display is covered by the display tests.
+    let rows = |out: &str| -> Vec<String> {
+        out.lines()
+            .map(|l| l.split('\t').take(3).collect::<Vec<_>>().join("|"))
+            .collect()
+    };
+
     let (out, _, ok) = env.run(&["list", "all"]);
     assert!(ok);
-    // Sessions come first now, so dedupe keeps the zellij "alpha" (the live
-    // row beats the dir row); blacklist hides "junk". Only one area is left,
-    // so no separator line appears.
-    assert_eq!(out, "zellij\talpha\t\tlive\t▢ alpha\n");
+    // "alpha" has no cached path yet, so the dir it was created from is
+    // hidden. Same-basename dirs both stay (dirs dedupe by path only); the
+    // bare "scratch" entry blacklists sessions by name, never dirs by
+    // basename; "/p/proj*" hides dirs by path glob.
+    assert_eq!(
+        rows(&out),
+        vec![
+            "zellij|alpha|",
+            "sep||",
+            "zoxide|scratch|/a/scratch",
+            "zoxide|scratch|/b/scratch",
+            "zoxide|keep|/p/keep",
+        ]
+    );
 
     let (out, _, _) = env.run(&["list", "blacklist"]);
-    assert_eq!(out, "zellij\tjunk\t\tlive\t▢ junk\n");
+    assert_eq!(
+        rows(&out),
+        vec!["zellij|junk|", "sep||", "zoxide|proj1|/p/proj1"]
+    );
 }
 
 #[test]
@@ -207,7 +163,10 @@ fn pin_row_pins_dirs_separately_and_sorts_them_first_in_dir_group() {
     let lines: Vec<&str> = out.trim_end().split('\n').collect();
     assert!(lines[0].starts_with("zellij\twork"));
     assert!(lines[1].starts_with("sep\t"));
-    assert_eq!(lines[2], "zoxide\tbbb\t/tmp/bbb\tdir\t📌 📁 bbb");
+    assert_eq!(
+        lines[2],
+        "zoxide\tbbb\t/tmp/bbb\tdir\t📌 📁 bbb  \t\x1b[2m/tmp/bbb\x1b[0m"
+    );
     assert!(lines[3].starts_with("zoxide\taaa"));
 
     // pin-row on a session row toggles the shared file, same as `noren pin`.
@@ -250,7 +209,11 @@ fn pinned_dirs_join_session_pins_when_configured() {
     // Pinned dir slots in right after the pinned session, before live ones;
     // the separator moves above the whole session area.
     assert!(lines[0].starts_with("zellij\tpinned-sess"));
-    assert_eq!(lines[1], "zoxide\tbbb\t/tmp/bbb\tdir\t📌 📁 bbb");
+    // Names pad to the longest one ("pinned-sess") before the dimmed path.
+    assert_eq!(
+        lines[1],
+        "zoxide\tbbb\t/tmp/bbb\tdir\t📌 📁 bbb         \t\x1b[2m/tmp/bbb\x1b[0m"
+    );
     assert!(lines[2].starts_with("zellij\tlive-sess"));
     assert!(lines[3].starts_with("sep\t"));
     assert!(lines[4].starts_with("zoxide\taaa"));
@@ -447,7 +410,7 @@ fn config_prefers_noren_dir_over_legacy_zjp() {
     fs::create_dir_all(env.home.join(".config/zjp")).unwrap();
     fs::write(
         env.home.join(".config/zjp/config.toml"),
-        "blacklist = [\"x\"]\n",
+        "blacklist = [\"/tmp/x\"]\n",
     )
     .unwrap();
     fs::create_dir_all(env.home.join(".config/noren")).unwrap();
@@ -459,7 +422,7 @@ fn config_prefers_noren_dir_over_legacy_zjp() {
 
     let (out, _, ok) = env.run(&["list", "zoxide"]);
     assert!(ok);
-    assert_eq!(out, "zoxide\tx\t/tmp/x\tdir\tx\n");
+    assert_eq!(out, "zoxide\tx\t/tmp/x\tdir\tx \t\x1b[2m/tmp/x\x1b[0m\n");
 }
 
 #[test]
@@ -475,7 +438,10 @@ fn malformed_config_warns_and_uses_defaults() {
     .unwrap();
     let (out, err, ok) = env.run(&["list", "zoxide"]);
     assert!(ok);
-    assert!(err.contains("warning"));
+    // The error names the file and position, and says what happens.
+    assert!(err.contains("config error in"), "stderr: {err}");
+    assert!(err.contains("line 1"), "stderr: {err}");
+    assert!(err.contains("using defaults"), "stderr: {err}");
     assert!(out.contains("/tmp/x"));
 }
 
@@ -520,6 +486,9 @@ fn connect_outside_with_layout_uses_new_session_with_layout() {
 fn connect_inside_zellij_creates_background_and_pipes_switch() {
     let env = Env::new();
     env.stub_zellij_logging();
+    let plugins = env.home.join(".config/zellij/plugins");
+    fs::create_dir_all(&plugins).unwrap();
+    fs::write(plugins.join("zellij-switch.wasm"), "").unwrap();
     let (_, _, ok) = env.run_env(&["connect", "ghost"], &[("ZELLIJ", "1")]);
     assert!(ok);
     let log = env.zellij_log();
@@ -578,6 +547,9 @@ fi"#,
     );
     fs::create_dir_all(env.home.join(".local/state/noren")).unwrap();
     fs::write(env.home.join(".local/state/noren/previous"), "other\n").unwrap();
+    let plugins = env.home.join(".config/zellij/plugins");
+    fs::create_dir_all(&plugins).unwrap();
+    fs::write(plugins.join("zellij-switch.wasm"), "").unwrap();
 
     let (out, _, ok) = env.run_env(
         &["discard"],

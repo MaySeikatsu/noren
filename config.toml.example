@@ -32,8 +32,12 @@ pinned_dirs_with_sessions = false
 # and falls back to text when it can't render.
 preview_mode = "visual"
 
-# Names to hide from the picker. `noren list blacklist` shows only these.
-blacklist = ["scratch", "junk"]
+# Hide entries from the picker. `noren list blacklist` shows only these.
+# Sessions and [[session]] entries match by name; folders match by path —
+# exact (`~` allowed) or a glob (`*` one segment, `**` recursive), never by
+# bare basename. So "scratch" hides a session named scratch, while
+# "**/scratch" hides every scratch folder.
+blacklist = ["scratch", "junk", "~/Downloads/**"]
 
 # 1 = basename only ("nixos"), 2 = "parent/child" ("dotfiles/nixos"), etc.
 dir_length = 1
@@ -42,6 +46,10 @@ dir_length = 1
 # now, ▢ live session running in the background, ⊗ exited, ⚙ config,
 # 📌 prefix on pinned sessions. Default: true.
 icons = true
+
+# Dimmed path after each name in the picker — tells apart random session
+# names and folders that share a basename. Default: true.
+show_paths = true
 
 # ▣/▢ distinction (detecting attached terminals) costs one parallel
 # `zellij action list-clients` round trip (~150-250ms) at picker startup.
@@ -59,6 +67,33 @@ snapshot_keep = 5
 # Automatically snapshot pinned sessions: on pin, and on every connect to a
 # pinned session. Identical states are not duplicated. Default: false.
 auto_snapshot_pinned = false
+
+# ---- Picker keybinds -----------------------------------------------------------
+# fzf key names ("ctrl-x", "alt-x", "f2", …); "" disables a bind. The picker
+# header is generated from this table, so it always shows what is active.
+
+[keys]
+sessions = "ctrl-t"   # view: zellij sessions
+dirs     = "ctrl-z"   # view: zoxide folders
+config   = "ctrl-f"   # view: [[session]] entries
+all      = "ctrl-a"   # view: everything
+reload   = "ctrl-r"   # refresh the current view
+pin      = "ctrl-p"   # pin toggle (sessions by name, folders by path)
+snapshot = "ctrl-s"   # save a layout snapshot of the selected session
+kill     = "ctrl-k"   # soft kill (layout survives, session resurrectable)
+delete   = "ctrl-d"   # hard delete (removes the resurrection data)
+preview  = "ctrl-/"   # show/hide the preview
+
+# ---- Confirmation -------------------------------------------------------------
+# When kill/delete ask before acting (y/N right in the picker prompt; on a
+# tty for `noren kill|delete`, skippable with --yes):
+#   "always" | "attached" (a terminal shows it right now) |
+#   "running" (attached or in the background) | "never"
+# Killing or deleting the session you are in switches you away first.
+
+[confirm]
+kill   = "attached"
+delete = "running"
 
 # ---- Defaults applied when a session/wildcard doesn't override --------------
 
