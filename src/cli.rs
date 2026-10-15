@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(
     name = "noren",
+    version,
     about = "noren - zellij session picker (sesh parity, Rust)",
     disable_help_subcommand = false
 )]
@@ -87,6 +88,9 @@ pub enum Cmd {
     },
     /// fzf preview command (receives the whole TSV line)
     Preview {
+        /// live | layout (default: preview_mode from the config)
+        #[arg(long)]
+        mode: Option<String>,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         line: Vec<String>,
     },

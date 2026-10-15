@@ -16,6 +16,9 @@ pub struct Config {
     pub separator: bool,
     pub pinned_dirs_with_sessions: bool,
     pub preview_mode: String,
+    pub live_refresh_ms: u64,
+    pub preview_position: String,
+    pub preview_position_compact: String,
     pub blacklist: Vec<String>,
     pub dir_length: usize,
     pub icons: bool,
@@ -43,8 +46,18 @@ impl Default for Config {
             // Pinned dirs stay in the folder area by default; opt in to move
             // them next to the pinned sessions.
             pinned_dirs_with_sessions: false,
-            // "visual" pane-box diagram, or "text" for the tree render.
-            preview_mode: "visual".into(),
+            // "live" = a running session's current screen (exited ones and
+            // failures fall back to "visual"); "visual" pane-box diagram;
+            // "text" tree render. The picker toggles live/layout (keys.live).
+            preview_mode: "live".into(),
+            // Picker re-renders a live session's preview this often (ms);
+            // 0 = only when the cursor moves.
+            live_refresh_ms: 1000,
+            // Where the preview sits: next to the list in a roomy terminal,
+            // above it when space is tight (the list stays at the bottom,
+            // next to the prompt).
+            preview_position: "right".into(),
+            preview_position_compact: "up".into(),
             blacklist: vec![],
             dir_length: 1,
             icons: true,
@@ -84,6 +97,7 @@ pub struct Keys {
     pub kill: String,
     pub delete: String,
     pub preview: String,
+    pub live: String,
 }
 
 impl Default for Keys {
@@ -99,6 +113,7 @@ impl Default for Keys {
             kill: "ctrl-k".into(),
             delete: "ctrl-d".into(),
             preview: "ctrl-/".into(),
+            live: "ctrl-l".into(),
         }
     }
 }
@@ -117,6 +132,7 @@ impl Keys {
             ("kill", self.kill.as_str()),
             ("delete", self.delete.as_str()),
             ("preview", self.preview.as_str()),
+            ("live", self.live.as_str()),
         ]
         .into_iter()
         .filter(|(_, k)| !k.trim().is_empty())
@@ -215,6 +231,35 @@ impl Config {
         parse_with_warnings(&raw, &p.display().to_string())
     }
 
+    /// fzf --preview-window: `preview_position` normally, switching to
+    /// `preview_position_compact` when the preview would get too small
+    /// (under 56 columns beside the list, or 10 lines above/below it).
+    pub fn preview_window(&self) -> String {
+        let pos = |v: &str, default: &'static str| match v {
+            "right" | "left" | "up" | "down" => v.to_string(),
+            _ => default.to_string(),
+        };
+        let main = pos(&self.preview_position, "right");
+        let compact = pos(&self.preview_position_compact, "up");
+        let size = |p: &str| {
+            if matches!(p, "right" | "left") {
+                "60%"
+            } else {
+                "50%"
+            }
+        };
+        let threshold = if matches!(main.as_str(), "right" | "left") {
+            56
+        } else {
+            10
+        };
+        format!(
+            "{main},{},<{threshold}({compact},{})",
+            size(&main),
+            size(&compact)
+        )
+    }
+
     /// Find a [[session]] entry matching either name or (expanded) path.
     pub fn find_session(&self, target: &str) -> Option<&SessionEntry> {
         let target_expanded = expand_path(target);
@@ -272,6 +317,9 @@ const TOP_KEYS: &[&str] = &[
     "separator",
     "pinned_dirs_with_sessions",
     "preview_mode",
+    "live_refresh_ms",
+    "preview_position",
+    "preview_position_compact",
     "blacklist",
     "dir_length",
     "icons",
@@ -287,6 +335,7 @@ const TOP_KEYS: &[&str] = &[
 ];
 const KEYS_KEYS: &[&str] = &[
     "sessions", "dirs", "config", "all", "reload", "pin", "snapshot", "kill", "delete", "preview",
+    "live",
 ];
 const CONFIRM_KEYS: &[&str] = &["kill", "delete"];
 const DEFAULT_SESSION_KEYS: &[&str] = &["startup_command", "preview_command", "layout"];
@@ -351,11 +400,21 @@ pub fn parse_with_warnings(raw: &str, origin: &str) -> (Config, Vec<String>) {
             }
         }
     }
-    if !matches!(cfg.preview_mode.as_str(), "visual" | "text") {
+    if !matches!(cfg.preview_mode.as_str(), "live" | "visual" | "text") {
         w.push(format!(
-            "preview_mode = \"{}\" is not \"visual\" or \"text\" (using visual)",
+            "preview_mode = \"{}\" is not \"live\", \"visual\" or \"text\" (using visual)",
             cfg.preview_mode
         ));
+    }
+    for (key, v) in [
+        ("preview_position", &cfg.preview_position),
+        ("preview_position_compact", &cfg.preview_position_compact),
+    ] {
+        if !matches!(v.as_str(), "right" | "left" | "up" | "down") {
+            w.push(format!(
+                "{key} = \"{v}\" is not right|left|up|down (using the default)"
+            ));
+        }
     }
     for o in &cfg.sort_order {
         if !matches!(o.as_str(), "zellij" | "config" | "zoxide") {
@@ -512,6 +571,17 @@ mod tests {
         assert!(cfg.find_session("/etc/nixos").is_some());
         assert!(cfg.find_session("/etc/other").is_none());
         assert!(cfg.find_session("other").is_none());
+    }
+
+    #[test]
+    fn preview_window_defaults_and_overrides() {
+        let mut cfg = Config::default();
+        assert_eq!(cfg.preview_window(), "right,60%,<56(up,50%)");
+        cfg.preview_position = "down".into();
+        cfg.preview_position_compact = "left".into();
+        assert_eq!(cfg.preview_window(), "down,50%,<10(left,60%)");
+        cfg.preview_position = "sideways".into();
+        assert_eq!(cfg.preview_window(), "right,60%,<56(left,60%)");
     }
 
     #[test]

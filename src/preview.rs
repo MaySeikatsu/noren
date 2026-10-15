@@ -162,32 +162,42 @@ fn summary_line(name: &str) -> Option<String> {
     Some(format!("\x1b[1m{}\x1b[0m", format_summary(&f, cols)))
 }
 
-pub fn preview(cfg: &Config, line: &str) {
+/// Session preview from the cached layout only: visual box-art (unless
+/// preview_mode = "text") under fzf, else the text tree, with the "last
+/// active" summary line on top. Never talks to zellij.
+fn layout_render(cfg: &Config, name: &str) -> String {
+    // The render itself stays untouched (text mode is golden-tested).
+    let summary = summary_line(name);
+    let reserved = usize::from(summary.is_some());
+    let visual = cfg.preview_mode != "text";
+    let body = visual
+        .then(fzf_preview_dims)
+        .flatten()
+        .and_then(|(w, h)| layout_preview::render_session_visual(name, w, h - reserved))
+        .unwrap_or_else(|| layout_preview::render_session(name));
+    match summary {
+        Some(s) => format!("{s}\n{body}"),
+        None => body,
+    }
+}
+
+/// `mode` overrides `preview_mode` for this call (the picker's live/layout
+/// toggle): "live" | "layout".
+pub fn preview(cfg: &Config, line: &str, mode: Option<&str>) {
     let r = parse_line(line);
     if r.state == "sep" {
         println!();
         return;
     }
+    let live = mode.unwrap_or(&cfg.preview_mode) == "live";
     let out = match r.state {
-        "live" | "exited" => {
-            // Visual box-art when configured and running under fzf; text
-            // tree otherwise. Both read only the cached layout file — a
-            // dead session is never resurrected for a preview.
-            // The summary line goes above the render, which itself stays
-            // untouched (text mode is golden-tested).
-            let summary = summary_line(r.name);
-            let reserved = usize::from(summary.is_some());
-            let visual = cfg.preview_mode != "text";
-            let body = visual
-                .then(fzf_preview_dims)
-                .flatten()
-                .and_then(|(w, h)| layout_preview::render_session_visual(r.name, w, h - reserved))
-                .unwrap_or_else(|| layout_preview::render_session(r.name));
-            match summary {
-                Some(s) => format!("{s}\n{body}"),
-                None => body,
-            }
-        }
+        // Live mode: the session's current screen. Only for rows listed as
+        // running — an exited session is never contacted (it would hang or
+        // resurrect); failures fall back to the layout render below.
+        "live" if live => fzf_preview_dims()
+            .and_then(|(w, h)| crate::live_preview::render_live(r.name, w, h))
+            .unwrap_or_else(|| layout_render(cfg, r.name)),
+        "live" | "exited" => layout_render(cfg, r.name),
         "config" => {
             let pv = cfg
                 .find_session(r.name)

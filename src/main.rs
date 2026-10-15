@@ -4,6 +4,7 @@ mod completions;
 mod config;
 mod connect;
 mod layout_preview;
+mod live_preview;
 mod picker;
 mod preview;
 mod session;
@@ -123,8 +124,8 @@ fn main() -> anyhow::Result<()> {
             window::window(target.as_deref(), session.as_deref());
             Ok(())
         }
-        Some(Cmd::Preview { line }) => {
-            preview::preview(&Config::load(), &line.join(" "));
+        Some(Cmd::Preview { mode, line }) => {
+            preview::preview(&Config::load(), &line.join(" "), mode.as_deref());
             Ok(())
         }
         Some(Cmd::NameFor { path }) => {

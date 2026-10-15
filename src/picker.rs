@@ -30,6 +30,10 @@ const VIEWS: &[(&str, &str, &str)] = &[
 ];
 const DEFAULT_PROMPT: &str = "⚡  ";
 const HINT: &str = "type to filter · ⏎ on no match creates a session";
+/// Preview labels; the live/layout toggle reads the current one back from
+/// $FZF_PREVIEW_LABEL.
+const LABEL_LIVE: &str = " ● live ";
+const LABEL_LAYOUT: &str = " ▦ layout ";
 
 /// The binary fzf binds re-exec. current_exe keeps the picker working when
 /// noren isn't on PATH (cargo target dir, nix result/).
@@ -83,6 +87,7 @@ fn header(cfg: &Config, warnings: &[String]) -> String {
             item("all", "all"),
             item("reload", "reload"),
             item("preview", "preview"),
+            item("live", "live/layout"),
         ],
         "",
     );
@@ -125,6 +130,7 @@ fn fzf_binds(cfg: &Config, exe: &str) -> Vec<String> {
                 format!("transform({exe} pick {action} {{}})")
             }
             "preview" => "toggle-preview".to_string(),
+            "live" => format!("transform({exe} pick preview-mode)"),
             view => {
                 let (_, prompt, src) = VIEWS
                     .iter()
@@ -181,11 +187,25 @@ pub fn picker() -> anyhow::Result<()> {
         "sh -c",
         "--preview",
         &format!("{exe} preview {{}}"),
+        "--preview-label",
+        if cfg.preview_mode == "live" {
+            LABEL_LIVE
+        } else {
+            LABEL_LAYOUT
+        },
         "--preview-window",
-        "right,60%,<56(down,50%)",
+        &cfg.preview_window(),
     ]);
     for b in fzf_binds(&cfg, &exe) {
         cmd.arg("--bind").arg(b);
+    }
+    // Live previews refresh on a timer through fzf's HTTP API.
+    // Unix socket paths max out at ~107 bytes; skip refreshing rather than
+    // fail to start fzf in an exotic runtime dir.
+    let sock =
+        Some(fzf_socket(&id)).filter(|p| cfg.live_refresh_ms > 0 && p.as_os_str().len() < 100);
+    if let Some(sock) = &sock {
+        cmd.arg("--listen").arg(sock);
     }
     let mut child = cmd
         // Re-execs show config problems in the header, not on stderr.
@@ -202,7 +222,20 @@ pub fn picker() -> anyhow::Result<()> {
         .expect("piped stdin")
         .write_all(format!("{tsv}\n").as_bytes())
         .ok();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let refresher = sock.clone().map(|sock| {
+        let stop = stop.clone();
+        let every = std::time::Duration::from_millis(cfg.live_refresh_ms.max(200));
+        std::thread::spawn(move || refresh_live_preview(&sock, every, &stop))
+    });
     let out = child.wait_with_output()?;
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    if let Some(t) = refresher {
+        let _ = t.join();
+    }
+    if let Some(sock) = &sock {
+        let _ = std::fs::remove_file(sock);
+    }
     let _ = std::fs::remove_file(pending_file(&id));
 
     // Non-zero = esc / ctrl-c abort; just close the picker.
@@ -252,6 +285,75 @@ fn target_for(line: &str) -> Option<String> {
     (!target.is_empty()).then(|| target.to_string())
 }
 
+// ---- live preview refresh ----------------------------------------------------
+
+fn runtime_dir() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+}
+
+/// fzf's --listen socket (must end in .sock; unix socket paths are short).
+fn fzf_socket(id: &str) -> PathBuf {
+    runtime_dir().join(format!("noren-fzf-{id}.sock"))
+}
+
+/// One HTTP/1.0 exchange with fzf's --listen server; the response body.
+fn fzf_http(sock: &std::path::Path, method: &str, body: &str) -> Option<String> {
+    use std::io::Read;
+    let mut s = std::os::unix::net::UnixStream::connect(sock).ok()?;
+    s.set_read_timeout(Some(std::time::Duration::from_millis(500)))
+        .ok()?;
+    let key = std::env::var("FZF_API_KEY")
+        .map(|k| format!("x-api-key: {k}\r\n"))
+        .unwrap_or_default();
+    // fzf answers 400 to a Content-Length: 0 GET, so only send it with a body.
+    let len = if body.is_empty() {
+        String::new()
+    } else {
+        format!("Content-Length: {}\r\n", body.len())
+    };
+    // fzf only accepts the query string on GET ("POST /" or 400).
+    let path = if method == "GET" { "/?limit=0" } else { "/" };
+    let req = format!("{method} {path} HTTP/1.0\r\nHost: localhost\r\n{key}{len}\r\n{body}");
+    s.write_all(req.as_bytes()).ok()?;
+    let mut resp = String::new();
+    let _ = s.read_to_string(&mut resp);
+    resp.split_once("\r\n\r\n").map(|(_, b)| b.to_string())
+}
+
+/// Is fzf's current row a live session? (GET state, `current.text`.)
+fn current_row_is_live(state: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(state)
+        .ok()
+        .and_then(|v| v["current"]["text"].as_str().map(str::to_string))
+        .is_some_and(|t| t.split('\t').nth(3) == Some("live"))
+}
+
+/// While the picker runs: every `every`, re-render the preview if the
+/// cursor sits on a live session (other previews don't change on their
+/// own, and re-running e.g. eza would only flicker).
+fn refresh_live_preview(
+    sock: &std::path::Path,
+    every: std::time::Duration,
+    stop: &std::sync::atomic::AtomicBool,
+) {
+    use std::sync::atomic::Ordering;
+    let tick = std::time::Duration::from_millis(50);
+    let mut waited = std::time::Duration::ZERO;
+    while !stop.load(Ordering::Relaxed) {
+        std::thread::sleep(tick);
+        waited += tick;
+        if waited < every {
+            continue;
+        }
+        waited = std::time::Duration::ZERO;
+        if fzf_http(sock, "GET", "").is_some_and(|st| current_row_is_live(&st)) {
+            let _ = fzf_http(sock, "POST", "refresh-preview");
+        }
+    }
+}
+
 // ---- `noren pick <event>`: fzf transform handlers -------------------------
 
 /// An fzf action with an argument, using a delimiter pair the argument
@@ -273,10 +375,7 @@ fn act(name: &str, arg: &str) -> String {
 }
 
 fn pending_file(id: &str) -> PathBuf {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(crate::state::state_dir);
-    dir.join(format!("noren-pick-{id}"))
+    runtime_dir().join(format!("noren-pick-{id}"))
 }
 
 /// A y/N confirmation waiting for its answer.
@@ -442,6 +541,7 @@ pub fn pick(event: &str, line: &str) {
             Some(p) => restore(&exe, &p, HINT),
             None => format!("{}+{}", reload(&exe, &fzf_prompt()), ghost(HINT)),
         },
+        "preview-mode" => toggle_preview_mode(&exe),
         "pin" => pin(&cfg, &exe, &row),
         "snapshot" => snapshot(&cfg, &row),
         "kill" | "delete" => {
@@ -501,6 +601,24 @@ fn confirm_or_run(cfg: &Config, exe: &str, kind: Kind, row: &Row) -> String {
         "rebind(change)".to_string(),
     ]
     .join("+")
+}
+
+/// Live ↔ layout for session previews, tracked in the preview label.
+fn toggle_preview_mode(exe: &str) -> String {
+    let now_live = std::env::var("FZF_PREVIEW_LABEL").is_ok_and(|l| l == LABEL_LIVE);
+    let (mode, label) = if now_live {
+        ("layout", LABEL_LAYOUT)
+    } else {
+        ("live", LABEL_LIVE)
+    };
+    format!(
+        "{}+{}",
+        act(
+            "change-preview",
+            &format!("{exe} preview --mode {mode} {{}}")
+        ),
+        act("change-preview-label", label)
+    )
 }
 
 fn pin(cfg: &Config, exe: &str, row: &Row) -> String {
@@ -579,7 +697,9 @@ mod tests {
     fn header_lists_every_active_bind_and_skips_disabled() {
         let mut cfg = Config::default();
         let h = header(&cfg, &[]);
-        for k in ["^t", "^z", "^f", "^a", "^r", "^/", "^p", "^s", "^k", "^d"] {
+        for k in [
+            "^t", "^z", "^f", "^a", "^r", "^/", "^l", "^p", "^s", "^k", "^d",
+        ] {
             assert!(h.contains(k), "header missing {k}: {h}");
         }
         cfg.keys.snapshot = String::new();
@@ -593,6 +713,16 @@ mod tests {
         let b = effective_binds(&cfg);
         assert!(!b.iter().any(|(a, _)| *a == "kill"));
         assert!(b.iter().any(|(a, k)| *a == "delete" && k == "ctrl-d"));
+    }
+
+    #[test]
+    fn refresh_only_for_live_rows() {
+        let st = |t: &str| format!(r#"{{"current":{{"index":0,"text":"{t}"}}}}"#);
+        assert!(current_row_is_live(&st("zellij\\tfoo\\t\\tlive\\tfoo")));
+        assert!(!current_row_is_live(&st("zellij\\tfoo\\t\\texited\\tfoo")));
+        assert!(!current_row_is_live(&st("zoxide\\tx\\t/x\\tdir\\tx")));
+        assert!(!current_row_is_live(r#"{"current":null}"#));
+        assert!(!current_row_is_live("garbage"));
     }
 
     #[test]
