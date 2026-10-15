@@ -1,7 +1,7 @@
 # noren (暖簾)
 
 <div align="center">
-   <img width="128" height="128<img width="128" height="1254" alt="noren" src="https://github.com/user-attachments/assets/4316da74-685f-4d22-8dfc-9faeeac7e78e" />
+   <img width="128" alt="noren" src="https://github.com/user-attachments/assets/4316da74-685f-4d22-8dfc-9faeeac7e78e" />
 </div>
 
 ##
@@ -57,7 +57,7 @@ inputs.noren = {
 cargo install --path .
 ```
 
-Runtime dependencies on PATH: `zellij` (≥ 0.42), `zoxide`, `fzf`, `git`; optional: `eza` (nicer directory previews). For in-place switching inside zellij, install [zellij-switch.wasm](https://github.com/mostafaqanbaryan/zellij-switch) to `~/.config/zellij/plugins/`.
+Runtime dependencies on PATH: `zellij` (≥ 0.42; verified on 0.45), `zoxide`, `fzf` (verified on 0.74 — the picker uses `transform`, ghost text and `accept-or-print-query`), `git`; optional: `eza` (nicer directory previews). For in-place switching inside zellij, install [zellij-switch.wasm](https://github.com/mostafaqanbaryan/zellij-switch) to `~/.config/zellij/plugins/` and grant its permissions once — it is required: zellij's own `action switch-session` does not move clients when called from the CLI (0.45), and noren reports an error instead of silently doing nothing.
 
 ## Usage
 
@@ -68,8 +68,8 @@ noren connect <name-or-path>       attach / create / resurrect / switch
 noren last                         jump back to the previous session
 noren root [path]                  connect to the git top-level session
 noren list [zellij|zoxide|config|all|blacklist]
-noren kill <name>                  soft kill (layout survives)
-noren delete <name>                hard delete (confirms on a tty)
+noren kill <name> [--yes]          soft kill (layout survives; asks if attached)
+noren delete <name> [--yes]        hard delete (asks if running)
 noren discard [name]               switch to previous session, then soft-kill
 noren mkdir <path>                 mkdir -p + connect
 noren clone <git-url> [dest]       git clone + connect
@@ -87,13 +87,17 @@ noren resolve <target> [--format env|json]
 
 | Key | Action |
 | --- | --- |
-| `Enter` | connect |
-| `Ctrl t` / `Ctrl z` / `Ctrl c` / `Ctrl a` | filter: sessions / dirs / config / all |
-| `Ctrl r` | reload |
+| `Enter` | connect — or, with no match, create a session named after the query |
+| `Ctrl t` / `Ctrl z` / `Ctrl f` / `Ctrl a` | view: sessions / dirs / config / all |
+| `Ctrl r` | reload the current view |
 | `Ctrl p` | pin toggle (sessions by name, dirs by path) |
-| `Ctrl d` | soft-kill selected |
-| `Ctrl Alt d` | hard-delete selected |
-| `Esc` | close |
+| `Ctrl s` | snapshot the selected session |
+| `Ctrl k` | soft-kill the selected session |
+| `Ctrl d` | hard-delete the selected session |
+| `Ctrl /` | show / hide the preview |
+| `Esc` | close (or cancel a pending confirmation) |
+
+All binds are configurable under `[keys]`; the header inside the picker is generated from the active set. Kill and delete ask `y/N` right in the prompt line when the `[confirm]` policy says so (default: kill asks if a terminal is attached, delete asks if the session is running); killing or deleting the session you are in switches you away first.
 
 ## Configuration
 
@@ -107,6 +111,16 @@ preview_mode  = "visual"      # or "text"
 snapshot_keep = 5
 auto_snapshot_pinned = false
 attached_indicator   = true   # ▣/▢ (costs ~200ms; false = instant list)
+show_paths           = true   # dimmed path after each name
+
+[keys]                        # fzf key names; "" disables a bind
+config = "ctrl-f"
+kill   = "ctrl-k"
+delete = "ctrl-d"
+
+[confirm]                     # always | attached | running | never
+kill   = "attached"
+delete = "running"
 
 [default_session]
 preview_command = "eza --all --git --icons --color=always {}"

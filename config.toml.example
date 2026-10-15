@@ -71,6 +71,10 @@ auto_snapshot_pinned = false
 # ---- Picker keybinds -----------------------------------------------------------
 # fzf key names ("ctrl-x", "alt-x", "f2", …); "" disables a bind. The picker
 # header is generated from this table, so it always shows what is active.
+# These override fzf's own defaults inside noren's picker only (your other
+# fzf uses are untouched) — e.g. ctrl-k/ctrl-p normally move up, ctrl-d
+# deletes a character. To get one back, bind the action to another key,
+# e.g. kill = "alt-k".
 
 [keys]
 sessions = "ctrl-t"   # view: zellij sessions
