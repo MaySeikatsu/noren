@@ -17,6 +17,7 @@ pub struct Config {
     pub pinned_dirs_with_sessions: bool,
     pub preview_mode: String,
     pub live_refresh_ms: u64,
+    pub live_all_tabs: bool,
     pub auto_reload_secs: u64,
     pub header_lines: usize,
     pub terminal: String,
@@ -56,6 +57,8 @@ impl Default for Config {
             // Picker re-renders a live session's preview this often (ms);
             // 0 = only when the cursor moves.
             live_refresh_ms: 1000,
+            // Live preview of ALL tabs side by side instead of the active one.
+            live_all_tabs: false,
             // Key overview above the prompt: lines in its compact form (the
             // most used keys; F1 shows all).
             header_lines: 2,
@@ -354,6 +357,7 @@ const TOP_KEYS: &[&str] = &[
     "pinned_dirs_with_sessions",
     "preview_mode",
     "live_refresh_ms",
+    "live_all_tabs",
     "header_lines",
     "auto_reload_secs",
     "terminal",

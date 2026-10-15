@@ -17,6 +17,11 @@ itself with what it actually shows — `preview · ● live`,
 terminal window (`terminal` in the config — a name or a `{}` template —
 else `$TERMINAL`, else the first known emulator); the picker stays open.
 
+**All tabs live (opt-in).** `live_all_tabs = true` turns the live preview
+into a grid of every tab's focused pane — background tabs stay current —
+side by side when there's room, stacked when narrow; the active tab's title
+is highlighted.
+
 **Auto-reload.** While the picker is open the list re-lists itself every
 `auto_reload_secs` (60; `0` = off), so sessions started or ended elsewhere
 don't show stale states. The cursor stays on the same entry across reloads,

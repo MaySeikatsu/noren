@@ -134,3 +134,51 @@ fn garbage_output_falls_back_to_layout() {
     assert!(ok);
     assert!(!out.contains("\x1b[32m●"), "{out}");
 }
+
+#[test]
+fn all_tabs_mode_shows_every_tab_side_by_side() {
+    let env = setup(ZELLIJ);
+    fs::create_dir_all(env.home.join(".config/noren")).unwrap();
+    fs::write(
+        env.home.join(".config/noren/config.toml"),
+        "live_all_tabs = true\n",
+    )
+    .unwrap();
+    let (out, err, ok) = env.run_env(
+        &["preview", "zellij\tlv\t\tlive\t▢ lv"],
+        &[("FZF_PREVIEW_COLUMNS", "60"), ("FZF_PREVIEW_LINES", "8")],
+    );
+    assert!(ok, "{err}");
+    let plain: Vec<String> = out
+        .lines()
+        .map(|l| {
+            let mut s = String::new();
+            let mut esc = false;
+            for c in l.chars() {
+                match (esc, c) {
+                    (false, '\x1b') => esc = true,
+                    (true, c) if c.is_ascii_alphabetic() => esc = false,
+                    (false, c) => s.push(c),
+                    _ => {}
+                }
+            }
+            s
+        })
+        .collect();
+    assert_eq!(plain[0], "● 2 tabs · lv");
+    // Two cells, 29 + gutter + 29 = 59 ≤ 60 columns; titles side by side.
+    assert!(
+        plain[1].starts_with(" notes ") && plain[1].contains("│ code "),
+        "{plain:?}"
+    );
+    // Both tabs' focused panes were dumped (2 = notes, 4 = code).
+    let log = env.zellij_log();
+    for id in ["terminal_2", "terminal_4"] {
+        assert!(log.iter().any(|l| l.contains(id)), "{id}: {log:?}");
+    }
+    // The active tab's title is in reverse video.
+    assert!(
+        out.lines().nth(1).unwrap().contains("\x1b[7m code "),
+        "{out}"
+    );
+}

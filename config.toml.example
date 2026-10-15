@@ -52,6 +52,10 @@ terminal = ""
 # open, so sessions started or ended elsewhere show up. 0 = off.
 auto_reload_secs = 60
 
+# Live preview of ALL tabs of a session side by side (each tab's focused
+# pane, stacked when the preview is narrow) instead of just the active tab.
+live_all_tabs = false
+
 # How often a live preview re-renders while the cursor rests on it (ms).
 # 0 = only when the cursor moves.
 live_refresh_ms = 1000

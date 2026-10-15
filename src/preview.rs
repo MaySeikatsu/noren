@@ -208,8 +208,9 @@ pub fn preview(cfg: &Config, line: &str, mode: Option<&str>) {
         "live" if style == "live" => {
             match fzf_preview_dims()
                 .ok_or(crate::live_preview::Miss::Unavailable)
-                .and_then(|(w, h)| crate::live_preview::render_live(r.name, w, h))
-            {
+                .and_then(|(w, h)| {
+                    crate::live_preview::render_live(r.name, w, h, cfg.live_all_tabs)
+                }) {
                 Ok(screen) => (screen, "● live".to_string()),
                 Err(miss) => {
                     let why = match miss {
