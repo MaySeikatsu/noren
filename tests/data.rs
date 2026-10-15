@@ -98,6 +98,43 @@ fn seed(env: &Env, rel: &str, body: &str) {
 const INSIDE_OLD: &[(&str, &str)] = &[("ZELLIJ", "0"), ("ZELLIJ_SESSION_NAME", "old")];
 
 #[test]
+fn record_last_inside_zellij_rotates_the_session_we_are_in() {
+    let env = Env::new();
+    env.stub_zellij_logging();
+    // noren last connected to "stale", then the user switched to "cur" with
+    // zellij's own session manager.
+    seed(&env, ".local/state/noren/last", "stale");
+    let (_, _, ok) = env.run_env(
+        &["connect", "ghost"],
+        &[("ZELLIJ", "0"), ("ZELLIJ_SESSION_NAME", "cur")],
+    );
+    assert!(ok);
+    assert_eq!(read(&env, ".local/state/noren/previous"), "cur");
+    assert_eq!(read(&env, ".local/state/noren/last"), "ghost");
+
+    // Reconnecting to the session we are in rotates nothing new.
+    let (_, _, ok) = env.run_env(
+        &["connect", "ghost"],
+        &[("ZELLIJ", "0"), ("ZELLIJ_SESSION_NAME", "ghost")],
+    );
+    assert!(ok);
+    assert_eq!(read(&env, ".local/state/noren/previous"), "cur");
+    assert_eq!(read(&env, ".local/state/noren/last"), "ghost");
+}
+
+#[test]
+fn record_last_outside_zellij_uses_the_last_file() {
+    let env = Env::new();
+    env.stub_zellij_logging();
+    seed(&env, ".local/state/noren/last", "stale");
+    // A leftover session name without $ZELLIJ is not "inside".
+    let (_, _, ok) = env.run_env(&["connect", "ghost"], &[("ZELLIJ_SESSION_NAME", "cur")]);
+    assert!(ok);
+    assert_eq!(read(&env, ".local/state/noren/previous"), "stale");
+    assert_eq!(read(&env, ".local/state/noren/last"), "ghost");
+}
+
+#[test]
 fn rename_carries_pin_history_and_snapshots() {
     let env = Env::new();
     env.stub_zellij_logging();
