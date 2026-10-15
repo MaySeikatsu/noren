@@ -209,6 +209,23 @@ pub fn pin_remove(name: &str) {
     }
 }
 
+// ---- hidden entries ------------------------------------------------------------
+// noren-owned, one `<kind>\t<identity>` per line: `session\t<name>`,
+// `config\t<name>`, `dir\t<path>` — the same identities dedupe uses.
+
+fn hidden_file() -> PathBuf {
+    state_dir().join("hidden")
+}
+
+pub fn read_hidden() -> Vec<String> {
+    read_lines(&hidden_file())
+}
+
+/// Toggle an entry's hidden state; true = hidden now.
+pub fn hidden_toggle(key: &str) -> bool {
+    toggle_line(&hidden_file(), key) == "pinned"
+}
+
 pub fn read_dir_pins() -> Vec<String> {
     read_lines(&dir_pin_file())
 }

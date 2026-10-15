@@ -98,6 +98,8 @@ pub struct Keys {
     pub delete: String,
     pub preview: String,
     pub live: String,
+    pub hide: String,
+    pub hidden: String,
 }
 
 impl Default for Keys {
@@ -114,6 +116,8 @@ impl Default for Keys {
             delete: "ctrl-d".into(),
             preview: "ctrl-/".into(),
             live: "ctrl-l".into(),
+            hide: "ctrl-h".into(),
+            hidden: "alt-h".into(),
         }
     }
 }
@@ -133,6 +137,8 @@ impl Keys {
             ("delete", self.delete.as_str()),
             ("preview", self.preview.as_str()),
             ("live", self.live.as_str()),
+            ("hide", self.hide.as_str()),
+            ("hidden", self.hidden.as_str()),
         ]
         .into_iter()
         .filter(|(_, k)| !k.trim().is_empty())
@@ -335,7 +341,7 @@ const TOP_KEYS: &[&str] = &[
 ];
 const KEYS_KEYS: &[&str] = &[
     "sessions", "dirs", "config", "all", "reload", "pin", "snapshot", "kill", "delete", "preview",
-    "live",
+    "live", "hide", "hidden",
 ];
 const CONFIRM_KEYS: &[&str] = &["kill", "delete"];
 const DEFAULT_SESSION_KEYS: &[&str] = &["startup_command", "preview_command", "layout"];

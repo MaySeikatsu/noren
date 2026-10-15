@@ -68,51 +68,88 @@ fn pretty_key(key: &str) -> String {
     k
 }
 
-/// Two header lines: views + list controls, then row actions. Keys bold,
+/// Header: views/list controls, then row actions — each group wrapped to
+/// `width` columns (the list pane) so no bind is ever cut off. Keys bold,
 /// labels dim; config warnings (if any) on top in yellow.
-fn header(cfg: &Config, warnings: &[String]) -> String {
+fn header(cfg: &Config, warnings: &[String], width: Option<usize>) -> String {
     let binds = effective_binds(cfg);
+    // (plain width, styled text)
     let item = |action: &str, label: &str| {
-        binds
-            .iter()
-            .find(|(a, _)| *a == action)
-            .map(|(_, k)| format!("\x1b[1m{}\x1b[0m \x1b[2m{label}\x1b[0m", pretty_key(k)))
+        binds.iter().find(|(a, _)| *a == action).map(|(_, k)| {
+            let key = pretty_key(k);
+            (
+                key.chars().count() + 1 + label.chars().count(),
+                format!("\x1b[1m{key}\x1b[0m \x1b[2m{label}\x1b[0m"),
+            )
+        })
     };
-    let line = |items: Vec<Option<String>>, tail: &str| {
-        let mut parts: Vec<String> = items.into_iter().flatten().collect();
-        if !tail.is_empty() {
-            parts.push(tail.to_string());
+    let fixed = |key: &str, label: &str| {
+        Some((
+            key.chars().count() + 1 + label.chars().count(),
+            format!("\x1b[1m{key}\x1b[0m \x1b[2m{label}\x1b[0m"),
+        ))
+    };
+    let wrap = |items: Vec<Option<(usize, String)>>| {
+        let max = width.unwrap_or(usize::MAX).max(10);
+        let mut lines: Vec<String> = Vec::new();
+        let (mut cur, mut cur_w) = (String::new(), 0usize);
+        for (w, text) in items.into_iter().flatten() {
+            if cur_w > 0 && cur_w + 2 + w > max {
+                lines.push(std::mem::take(&mut cur));
+                cur_w = 0;
+            }
+            if cur_w > 0 {
+                cur.push_str("  ");
+                cur_w += 2;
+            }
+            cur.push_str(&text);
+            cur_w += w;
         }
-        parts.join("  ")
+        if cur_w > 0 {
+            lines.push(cur);
+        }
+        lines
     };
-    let views = line(
-        vec![
-            item("sessions", "sessions"),
-            item("dirs", "dirs"),
-            item("config", "config"),
-            item("all", "all"),
-            item("reload", "reload"),
-            item("preview", "preview"),
-            item("live", "live/layout"),
-        ],
-        "",
-    );
-    let acts = line(
-        vec![
-            item("pin", "pin"),
-            item("snapshot", "snapshots"),
-            item("kill", "kill"),
-            item("delete", "delete"),
-        ],
-        "\x1b[1m⏎\x1b[0m \x1b[2mconnect\x1b[0m  \x1b[1mesc\x1b[0m \x1b[2mclose\x1b[0m",
-    );
+    let views = wrap(vec![
+        item("sessions", "sessions"),
+        item("dirs", "dirs"),
+        item("config", "config"),
+        item("all", "all"),
+        item("hidden", "show hidden"),
+        item("reload", "reload"),
+        item("preview", "preview"),
+        item("live", "live/layout"),
+    ]);
+    let acts = wrap(vec![
+        fixed("⏎", "connect"),
+        item("pin", "pin"),
+        item("hide", "hide"),
+        item("snapshot", "snapshots"),
+        item("kill", "kill"),
+        item("delete", "delete"),
+        fixed("esc", "close"),
+    ]);
     let mut out: Vec<String> = warnings
         .iter()
         .map(|w| format!("\x1b[33m⚠ {w}\x1b[0m"))
         .collect();
-    out.push(views);
-    out.push(acts);
+    out.extend(views);
+    out.extend(acts);
     out.join("\n")
+}
+
+/// Columns the header gets: the list pane, i.e. the terminal minus a
+/// side-by-side preview (same switch as Config::preview_window: a side
+/// preview takes 60% unless that would be under 56 columns).
+fn header_width(cfg: &Config, cols: usize) -> usize {
+    let side = !matches!(cfg.preview_position.as_str(), "up" | "down");
+    let preview = cols * 60 / 100;
+    let list = if side && preview >= 56 {
+        cols - preview
+    } else {
+        cols
+    };
+    list.saturating_sub(3)
 }
 
 /// Active binds with duplicates resolved like fzf does (last one wins).
@@ -136,6 +173,8 @@ fn fzf_binds(cfg: &Config, exe: &str) -> Vec<String> {
                 format!("transform({exe} pick {action} {{}})")
             }
             "preview" => "toggle-preview".to_string(),
+            "hide" => format!("transform({exe} pick hide {{}})"),
+            "hidden" => format!("transform({exe} pick show-hidden)"),
             "live" => format!("transform({exe} pick preview-mode)"),
             view => {
                 let (_, prompt, src) = VIEWS
@@ -151,7 +190,10 @@ fn fzf_binds(cfg: &Config, exe: &str) -> Vec<String> {
     binds.push(format!("esc:transform({exe} pick esc)"));
     // Only live while a y/N confirmation is pending.
     binds.push(format!("change:transform({exe} pick answer)"));
-    binds.push("start:unbind(change)".to_string());
+    binds.push(format!(
+        "start:unbind(change)+transform-header({exe} pick header)"
+    ));
+    binds.push(format!("resize:transform-header({exe} pick header)"));
     binds
 }
 
@@ -187,7 +229,7 @@ pub fn picker() -> anyhow::Result<()> {
         "--ghost",
         HINT,
         "--header",
-        &header(&cfg, &warnings),
+        &header(&cfg, &warnings, None),
         // Binds are written for POSIX sh, whatever the user's $SHELL is.
         "--with-shell",
         "sh -c",
@@ -243,6 +285,7 @@ pub fn picker() -> anyhow::Result<()> {
         let _ = std::fs::remove_file(sock);
     }
     let _ = std::fs::remove_file(pending_file(&id));
+    let _ = std::fs::remove_file(show_hidden_file(&id));
 
     // Non-zero = esc / ctrl-c abort; just close the picker.
     if !out.status.success() {
@@ -505,6 +548,16 @@ fn reload(exe: &str, prompt: &str) -> String {
     act("reload", &cmd)
 }
 
+/// Present while the picker lists hidden entries (Alt h).
+fn show_hidden_file(id: &str) -> PathBuf {
+    runtime_dir().join(format!("noren-pick-{id}.hidden"))
+}
+
+/// Is `noren list` running for a picker that currently shows hidden rows?
+pub fn showing_hidden() -> bool {
+    std::env::var("NOREN_PICKER_ID").is_ok_and(|id| show_hidden_file(&id).exists())
+}
+
 /// Where the snapshot menu returns to on esc.
 fn view_file() -> PathBuf {
     runtime_dir().join(format!("noren-pick-{}.view", picker_id()))
@@ -611,6 +664,16 @@ pub fn pick(event: &str, line: &str) {
             None => format!("{}+{}", reload(&exe, &fzf_prompt()), ghost(HINT)),
         },
         "preview-mode" => toggle_preview_mode(&exe),
+        "header" => {
+            let (cfg, warnings) = Config::load_with_warnings();
+            let width = std::env::var("FZF_COLUMNS")
+                .ok()
+                .and_then(|c| c.parse().ok())
+                .map(|c| header_width(&cfg, c));
+            header(&cfg, &warnings, width)
+        }
+        "hide" => hide(&cfg, &exe, line),
+        "show-hidden" => toggle_show_hidden(&exe),
         "pin" => pin(&cfg, &exe, &row),
         "snapshot" => snapshot_key(&cfg, &exe, &row),
         "delete" if row.source == "snapshot" => confirm_snapshot(Action::DropSnapshot, &row),
@@ -676,6 +739,65 @@ fn confirm_or_run(cfg: &Config, exe: &str, kind: Kind, row: &Row) -> String {
         "rebind(change)".to_string(),
     ]
     .join("+")
+}
+
+/// ^h: hide the selected entry, or unhide it (hidden rows are only listed
+/// while "show hidden" is on).
+fn hide(cfg: &Config, exe: &str, line: &str) -> String {
+    let mut fields = line.split('\t');
+    let r = crate::sources::Row {
+        source: match fields.next().unwrap_or("") {
+            "zellij" => "zellij",
+            "config" => "config",
+            "zoxide" => "zoxide",
+            _ => "",
+        },
+        name: fields.next().unwrap_or("").to_string(),
+        path: fields.next().unwrap_or("").to_string(),
+        state: "",
+        pinned: false,
+        icon: String::new(),
+        hidden: false,
+    };
+    let Some(key) = crate::sources::hidden_key(&r) else {
+        return ghost("✗ only sessions, folders and config entries can be hidden");
+    };
+    let label = if r.source == "zoxide" {
+        &r.path
+    } else {
+        &r.name
+    };
+    if crate::sources::blacklisted(cfg, &r) {
+        // Hidden by the config, not by ^h: only the config can change it.
+        return ghost(&format!(
+            "✗ {label} is hidden by blacklist in config.toml — remove it there"
+        ));
+    }
+    let hidden_now = crate::state::hidden_toggle(&key);
+    let msg = if hidden_now {
+        let back = cfg.keys.hidden.trim();
+        if back.is_empty() {
+            format!("🙈 hid {label}")
+        } else {
+            format!("🙈 hid {label} · {} shows hidden entries", pretty_key(back))
+        }
+    } else {
+        format!("👁 {label} is visible again")
+    };
+    format!("{}+{}", reload(exe, &fzf_prompt()), ghost(&msg))
+}
+
+/// Alt h: list hidden entries (⊘, dim) alongside the rest, or not.
+fn toggle_show_hidden(exe: &str) -> String {
+    let f = show_hidden_file(&picker_id());
+    let msg = if f.exists() {
+        let _ = std::fs::remove_file(&f);
+        "hidden entries are hidden again"
+    } else {
+        let _ = std::fs::write(&f, "");
+        "showing hidden entries (⊘) · ^h on one unhides it"
+    };
+    format!("{}+{}", reload(exe, &fzf_prompt()), ghost(msg))
 }
 
 /// Live ↔ layout for session previews, tracked in the preview label.
@@ -899,14 +1021,45 @@ mod tests {
     #[test]
     fn header_lists_every_active_bind_and_skips_disabled() {
         let mut cfg = Config::default();
-        let h = header(&cfg, &[]);
+        let h = header(&cfg, &[], None);
         for k in [
             "^t", "^z", "^f", "^a", "^r", "^/", "^l", "^p", "^s", "^k", "^d",
         ] {
             assert!(h.contains(k), "header missing {k}: {h}");
         }
         cfg.keys.snapshot = String::new();
-        assert!(!header(&cfg, &[]).contains("snapshot"));
+        assert!(!header(&cfg, &[], None).contains("snapshot"));
+    }
+
+    #[test]
+    fn header_wraps_to_the_list_pane_and_keeps_every_bind() {
+        let cfg = Config::default();
+        // 160 cols: preview beside (96), list 64 → header width 61.
+        assert_eq!(header_width(&cfg, 160), 61);
+        // 80 cols: preview would be 48 < 56 → above the list, full width.
+        assert_eq!(header_width(&cfg, 80), 77);
+        let strip = |s: &str| {
+            let mut out = String::new();
+            let mut esc = false;
+            for c in s.chars() {
+                match (esc, c) {
+                    (false, '\x1b') => esc = true,
+                    (true, c) if c.is_ascii_alphabetic() => esc = false,
+                    (false, c) => out.push(c),
+                    _ => {}
+                }
+            }
+            out
+        };
+        for w in [30, 61, 77] {
+            let h = header(&cfg, &[], Some(w));
+            for line in h.lines() {
+                assert!(strip(line).chars().count() <= w, "{w}: {line:?}");
+            }
+            for k in ["^t", "^h", "M-h", "^l", "^d", "esc"] {
+                assert!(h.contains(k), "{w}: missing {k}");
+            }
+        }
     }
 
     #[test]

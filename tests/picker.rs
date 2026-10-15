@@ -471,3 +471,92 @@ fn no_match_in_the_snapshot_menu_does_not_create_a_session() {
     let env = setup();
     assert_eq!(pick(&env, &["enter", ""], "📸 bg  ", "zzz"), "ignore");
 }
+
+// ---- hidden entries --------------------------------------------------------
+
+fn names_listed(env: &Env, extra: &[(&str, &str)]) -> Vec<String> {
+    let (out, _, _) = env.run_env(&["list", "all"], extra);
+    out.lines()
+        .map(|l| l.split('\t').nth(1).unwrap_or("").to_string())
+        .filter(|n| !n.is_empty())
+        .collect()
+}
+
+#[test]
+fn ctrl_h_hides_and_alt_h_shows_hidden_entries_marked() {
+    let env = setup();
+    let out = pick(&env, &["hide", &row("zellij", "bg", "live")], "⚡  ", "");
+    assert!(
+        out.contains("🙈 hid bg · M-h shows hidden entries"),
+        "{out}"
+    );
+    assert!(out.contains(" list all)"), "{out}");
+    let out = pick(&env, &["hide", "zoxide\ttmp\t/tmp\tdir\ttmp"], "⚡  ", "");
+    assert!(out.contains("🙈 hid /tmp"), "{out}");
+    let hidden = fs::read_to_string(env.home.join(".local/state/noren/hidden")).unwrap();
+    assert_eq!(hidden, "session\tbg\ndir\t/tmp\n");
+
+    // Plain list (CLI, or the picker by default): gone.
+    let names = names_listed(&env, &[]);
+    assert!(!names.contains(&"bg".to_string()) && !names.contains(&"tmp".to_string()));
+    // `noren list hidden` shows only them.
+    let (out, _, _) = env.run(&["list", "hidden"]);
+    let rows: Vec<&str> = out.lines().filter(|l| !l.starts_with("sep\t")).collect();
+    assert_eq!(rows.len(), 2, "{out}");
+
+    // Alt h inside a picker: listed again, marked ⊘ and dim italic.
+    let rt = env.home.join("run");
+    let out = pick(&env, &["show-hidden"], "⚡  ", "");
+    assert!(out.contains("showing hidden entries"), "{out}");
+    assert!(rt.join("noren-pick-42.hidden").exists());
+    let (out, _, _) = env.run_env(
+        &["list", "all"],
+        &[
+            ("NOREN_PICKER_ID", "42"),
+            ("XDG_RUNTIME_DIR", rt.to_str().unwrap()),
+        ],
+    );
+    let bg = out
+        .lines()
+        .find(|l| l.starts_with("zellij\tbg\t"))
+        .expect("bg listed");
+    assert!(bg.contains("⊘ \x1b[2;3mbg\x1b[0m"), "{bg:?}");
+    let att = out
+        .lines()
+        .find(|l| l.starts_with("zellij\tatt\t"))
+        .unwrap();
+    assert!(!att.contains('⊘'), "{att:?}");
+
+    // ^h on a hidden row unhides it; Alt h again stops showing hidden ones.
+    let out = pick(&env, &["hide", &row("zellij", "bg", "live")], "⚡  ", "");
+    assert!(out.contains("👁 bg is visible again"), "{out}");
+    pick(&env, &["show-hidden"], "⚡  ", "");
+    assert!(!rt.join("noren-pick-42.hidden").exists());
+    assert!(names_listed(&env, &[]).contains(&"bg".to_string()));
+}
+
+#[test]
+fn blacklisted_entries_explain_where_to_unhide_them() {
+    let env = setup();
+    write_config(&env, "blacklist = [\"bg\"]\n");
+    let out = pick(&env, &["hide", &row("zellij", "bg", "live")], "⚡  ", "");
+    assert!(out.contains("hidden by blacklist in config.toml"), "{out}");
+    // The toggle was undone: nothing recorded.
+    let f = env.home.join(".local/state/noren/hidden");
+    assert!(fs::read_to_string(&f).unwrap_or_default().is_empty());
+}
+
+#[test]
+fn separator_and_snapshot_rows_cannot_be_hidden() {
+    let env = setup();
+    let out = pick(&env, &["hide", "sep\t\t\tsep\t╌"], "⚡  ", "");
+    assert!(out.starts_with("change-ghost(✗"), "{out}");
+}
+
+#[test]
+fn header_event_wraps_to_fzf_columns() {
+    let env = setup();
+    let (out, _, _) = env.run_env(&["pick", "header"], &[("FZF_COLUMNS", "40")]);
+    assert!(out.lines().count() >= 4, "{out}");
+    assert!(out.contains("M-h") && out.contains("^h"), "{out}");
+}

@@ -47,7 +47,8 @@ live_refresh_ms = 1000
 preview_position         = "right"
 preview_position_compact = "up"
 
-# Hide entries from the picker. `noren list blacklist` shows only these.
+# Hide entries from the picker permanently (ctrl-h hides interactively;
+# alt-h shows hidden ones). `noren list hidden` shows only hidden entries.
 # Sessions and [[session]] entries match by name; folders match by path —
 # exact (`~` allowed) or a glob (`*` one segment, `**` recursive), never by
 # bare basename. So "scratch" hides a session named scratch, while
@@ -104,6 +105,9 @@ kill     = "ctrl-k"   # soft kill (layout survives, session resurrectable)
 delete   = "ctrl-d"   # hard delete (removes the resurrection data)
 preview  = "ctrl-/"   # show/hide the preview
 live     = "ctrl-l"   # session previews: live screen <-> saved layout
+hide     = "ctrl-h"   # hide / unhide the selected entry (kept in
+                      # ~/.local/state/noren/hidden; `noren list hidden`)
+hidden   = "alt-h"    # show hidden entries (⊘) in the list, or not
 
 # ---- Confirmation -------------------------------------------------------------
 # When kill/delete ask before acting (y/N right in the picker prompt; on a
