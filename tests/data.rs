@@ -85,6 +85,83 @@ fn config_preview_command_is_quoted_too() {
     assert_eq!(out, "</tmp/my proj>\n");
 }
 
+fn read(env: &Env, rel: &str) -> String {
+    fs::read_to_string(env.home.join(rel)).unwrap_or_default()
+}
+
+fn seed(env: &Env, rel: &str, body: &str) {
+    let p = env.home.join(rel);
+    fs::create_dir_all(p.parent().unwrap()).unwrap();
+    fs::write(p, body).unwrap();
+}
+
+const INSIDE_OLD: &[(&str, &str)] = &[("ZELLIJ", "0"), ("ZELLIJ_SESSION_NAME", "old")];
+
+#[test]
+fn rename_carries_pin_history_and_snapshots() {
+    let env = Env::new();
+    env.stub_zellij_logging();
+    seed(&env, ".local/state/noren/last", "old");
+    seed(&env, ".local/state/noren/previous", "other");
+    seed(&env, ".local/state/zellij/pinned", "keep\nold\n");
+    seed(
+        &env,
+        ".local/state/noren/snapshots/old/a.kdl",
+        "layout {}\n",
+    );
+
+    let (out, err, ok) = env.run_env(&["rename", "new"], INSIDE_OLD);
+    assert!(ok, "stderr: {err}");
+    assert_eq!(out, "renamed: old -> new\n");
+    assert_eq!(env.zellij_log(), vec!["action rename-session new"]);
+
+    assert_eq!(read(&env, ".local/state/noren/last"), "new");
+    assert_eq!(read(&env, ".local/state/noren/previous"), "other");
+    assert_eq!(read(&env, ".local/state/zellij/pinned"), "keep\nnew\n");
+    assert_eq!(read(&env, ".local/state/zellij/current-session"), "new");
+    let snaps = env.home.join(".local/state/noren/snapshots");
+    assert!(!snaps.join("old").exists());
+    assert_eq!(
+        read(&env, ".local/state/noren/snapshots/new/a.kdl"),
+        "layout {}\n"
+    );
+}
+
+#[test]
+fn rename_merges_snapshots_without_overwriting() {
+    let env = Env::new();
+    env.stub_zellij_logging();
+    seed(&env, ".local/state/noren/last", "other");
+    seed(&env, ".local/state/noren/previous", "old");
+    seed(&env, ".local/state/noren/snapshots/old/a.kdl", "old-a");
+    seed(&env, ".local/state/noren/snapshots/old/b.kdl", "old-b");
+    seed(&env, ".local/state/noren/snapshots/new/b.kdl", "new-b");
+
+    let (_, _, ok) = env.run_env(&["rename", "new"], INSIDE_OLD);
+    assert!(ok);
+    assert_eq!(read(&env, ".local/state/noren/last"), "other");
+    assert_eq!(read(&env, ".local/state/noren/previous"), "new");
+    // `noren last` now targets the renamed session.
+    env.stub_zellij_logging();
+    let (_, _, ok) = env.run(&["last"]);
+    assert!(ok);
+    assert_eq!(env.zellij_log().last().unwrap(), "attach --create new");
+
+    assert_eq!(
+        read(&env, ".local/state/noren/snapshots/new/a.kdl"),
+        "old-a"
+    );
+    assert_eq!(
+        read(&env, ".local/state/noren/snapshots/new/b.kdl"),
+        "new-b"
+    );
+    // The clash stays behind instead of being lost.
+    assert_eq!(
+        read(&env, ".local/state/noren/snapshots/old/b.kdl"),
+        "old-b"
+    );
+}
+
 fn install_layout(env: &Env, session: &str, src: &str) {
     let info = env
         .home

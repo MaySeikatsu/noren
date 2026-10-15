@@ -69,6 +69,42 @@ pub fn record_last(name: &str) {
     let _ = fs::write(last_file(), name);
 }
 
+/// Rename carries history: replace `old` with `new` in `last`/`previous`
+/// (exact matches only), so `noren last` follows the renamed session.
+pub fn rename_in_history(old: &str, new: &str) {
+    for f in [last_file(), previous_file()] {
+        if fs::read_to_string(&f).is_ok_and(|s| s.trim() == old) {
+            let _ = fs::write(&f, new);
+        }
+    }
+}
+
+pub fn snapshots_dir() -> PathBuf {
+    state_dir().join("snapshots")
+}
+
+/// Rename carries snapshots: move snapshots/<old>/ to snapshots/<new>/.
+/// When <new>/ already exists, files are moved in without overwriting —
+/// name clashes stay behind in <old>/, which is removed only once empty.
+pub fn rename_snapshots(old: &str, new: &str) {
+    let (from, to) = (snapshots_dir().join(old), snapshots_dir().join(new));
+    if !from.is_dir() {
+        return;
+    }
+    if !to.exists() {
+        let _ = fs::rename(&from, &to);
+        return;
+    }
+    let Ok(rd) = fs::read_dir(&from) else { return };
+    for entry in rd.flatten() {
+        let dst = to.join(entry.file_name());
+        if !dst.exists() {
+            let _ = fs::rename(entry.path(), dst);
+        }
+    }
+    let _ = fs::remove_dir(&from); // fails (keeps it) unless empty
+}
+
 /// The session to jump back to with `noren last`.
 pub fn read_last() -> String {
     fs::read_to_string(previous_file())

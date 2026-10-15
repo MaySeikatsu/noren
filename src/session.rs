@@ -56,7 +56,10 @@ pub fn pin_row(cfg: &Config, line: &str) {
     }
 }
 
-/// `noren rename <new>` — rename the current session, carry the pin over.
+/// `noren rename <new>` — rename the current session, carrying the pin,
+/// `last`/`previous` history and snapshots over. zellij itself moves the
+/// resurrection cache dir (verified on 0.45.1), so connect-by-name keeps
+/// working under the new name.
 pub fn rename_current(new: &str) {
     let old = current_session();
     if old.is_empty() {
@@ -91,6 +94,8 @@ pub fn rename_current(new: &str) {
         state::pin_remove(&old);
         state::pin_add(&target);
     }
+    state::rename_in_history(&old, &target);
+    state::rename_snapshots(&old, &target);
     state::write_current_session(&target);
     println!("renamed: {old} -> {target}");
 }
