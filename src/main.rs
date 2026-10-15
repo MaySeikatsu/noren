@@ -1,3 +1,4 @@
+mod actions;
 mod cli;
 mod completions;
 mod config;
@@ -12,7 +13,6 @@ mod state;
 mod util;
 mod window;
 
-use std::io::{IsTerminal, Write};
 use std::process::Command;
 
 use clap::Parser;
@@ -24,7 +24,7 @@ fn main() -> anyhow::Result<()> {
     state::migrate_legacy();
     let cli = Cli::parse();
     match cli.cmd {
-        None | Some(Cmd::Picker) => picker::picker(&Config::load()),
+        None | Some(Cmd::Picker) => picker::picker(),
         Some(Cmd::List { source }) => {
             sources::list_cmd(&Config::load(), &source);
             Ok(())
@@ -56,28 +56,15 @@ fn main() -> anyhow::Result<()> {
             }
             connect::session_connect(&Config::load(), &top)
         }
-        Some(Cmd::Kill { name }) => {
-            let status = Command::new("zellij")
-                .args(["kill-session", &name])
-                .status()?;
-            std::process::exit(status.code().unwrap_or(1));
+        Some(Cmd::Kill { name, yes }) => {
+            actions::cli(&Config::load(), actions::Kind::Kill, &name, yes)
         }
-        Some(Cmd::Delete { name }) => {
-            // Confirm on a tty; skip when stdin isn't one (fzf execute-silent).
-            if std::io::stdin().is_terminal() {
-                print!("Hard-delete zellij session \"{name}\"? [y/N] ");
-                std::io::stdout().flush().ok();
-                let mut ans = String::new();
-                std::io::stdin().read_line(&mut ans).ok();
-                if !matches!(ans.trim(), "y" | "Y" | "yes" | "Yes") {
-                    println!("aborted");
-                    return Ok(());
-                }
-            }
-            let status = Command::new("zellij")
-                .args(["delete-session", &name])
-                .status()?;
-            std::process::exit(status.code().unwrap_or(1));
+        Some(Cmd::Delete { name, yes }) => {
+            actions::cli(&Config::load(), actions::Kind::Delete, &name, yes)
+        }
+        Some(Cmd::Pick { event, line }) => {
+            picker::pick(&event, &line.join(" "));
+            Ok(())
         }
         Some(Cmd::Mkdir { path }) => {
             let p = util::expand_path(&path);

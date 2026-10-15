@@ -28,10 +28,20 @@ pub enum Cmd {
     Last,
     /// connect to git top-level
     Root { path: Option<String> },
-    /// soft kill (keeps saved layout)
-    Kill { name: String },
-    /// hard delete (removes serialization)
-    Delete { name: String },
+    /// soft kill (keeps saved layout; asks first if a terminal is attached)
+    Kill {
+        name: String,
+        /// skip the confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
+    /// hard delete (removes serialization; asks first if running)
+    Delete {
+        name: String,
+        /// skip the confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
+    },
     /// close current session: switch to the previous one, then soft-kill
     Discard { name: Option<String> },
     /// mkdir -p + connect
@@ -67,6 +77,13 @@ pub enum Cmd {
         target: Option<String>,
         #[arg(short, long)]
         session: Option<String>,
+    },
+    /// picker-internal: fzf transform handler for keys and enter/esc
+    #[command(hide = true)]
+    Pick {
+        event: String,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        line: Vec<String>,
     },
     /// fzf preview command (receives the whole TSV line)
     Preview {
