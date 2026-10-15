@@ -17,6 +17,10 @@ pub struct Config {
     pub pinned_dirs_with_sessions: bool,
     pub preview_mode: String,
     pub live_refresh_ms: u64,
+    pub live_all_tabs: bool,
+    pub auto_reload_secs: u64,
+    pub header_lines: usize,
+    pub terminal: String,
     pub preview_position: String,
     pub preview_position_compact: String,
     pub blacklist: Vec<String>,
@@ -53,6 +57,18 @@ impl Default for Config {
             // Picker re-renders a live session's preview this often (ms);
             // 0 = only when the cursor moves.
             live_refresh_ms: 1000,
+            // Live preview of ALL tabs side by side instead of the active one.
+            live_all_tabs: false,
+            // Key overview above the prompt: lines in its compact form (the
+            // most used keys; F1 shows all).
+            header_lines: 2,
+            // Re-list sessions/dirs this often while the picker is open, so
+            // sessions started or ended elsewhere show up (0 = off).
+            auto_reload_secs: 60,
+            // Terminal for "open in a new window": "" = $TERMINAL, else the
+            // first known emulator on PATH; a name ("foot"), or a template
+            // with {} for the command ("footclient -a noren {}").
+            terminal: String::new(),
             // Where the preview sits: next to the list in a roomy terminal,
             // above it when space is tight (the list stays at the bottom,
             // next to the prompt).
@@ -103,6 +119,8 @@ pub struct Keys {
     pub rename: String,
     pub paths: String,
     pub tabs: String,
+    pub help: String,
+    pub new_window: String,
 }
 
 impl Default for Keys {
@@ -118,12 +136,16 @@ impl Default for Keys {
             kill: "ctrl-k".into(),
             delete: "ctrl-d".into(),
             preview: "ctrl-/".into(),
-            live: "ctrl-l".into(),
+            // Deprecated alias of `preview` (both cycle the preview); off.
+            live: String::new(),
             hide: "ctrl-h".into(),
             hidden: "alt-h".into(),
             rename: "ctrl-e".into(),
             paths: "alt-p".into(),
             tabs: "alt-t".into(),
+            help: "f1".into(),
+            // ctrl-enter is indistinguishable from enter in most terminals.
+            new_window: "alt-enter".into(),
         }
     }
 }
@@ -148,6 +170,8 @@ impl Keys {
             ("rename", self.rename.as_str()),
             ("paths", self.paths.as_str()),
             ("tabs", self.tabs.as_str()),
+            ("help", self.help.as_str()),
+            ("new_window", self.new_window.as_str()),
         ]
         .into_iter()
         .filter(|(_, k)| !k.trim().is_empty())
@@ -333,6 +357,10 @@ const TOP_KEYS: &[&str] = &[
     "pinned_dirs_with_sessions",
     "preview_mode",
     "live_refresh_ms",
+    "live_all_tabs",
+    "header_lines",
+    "auto_reload_secs",
+    "terminal",
     "preview_position",
     "preview_position_compact",
     "blacklist",
@@ -349,8 +377,24 @@ const TOP_KEYS: &[&str] = &[
     "wildcard",
 ];
 const KEYS_KEYS: &[&str] = &[
-    "sessions", "dirs", "config", "all", "reload", "pin", "snapshot", "kill", "delete", "preview",
-    "live", "hide", "hidden", "rename", "paths", "tabs",
+    "sessions",
+    "dirs",
+    "config",
+    "all",
+    "reload",
+    "pin",
+    "snapshot",
+    "kill",
+    "delete",
+    "preview",
+    "live",
+    "hide",
+    "hidden",
+    "rename",
+    "paths",
+    "tabs",
+    "help",
+    "new_window",
 ];
 const CONFIRM_KEYS: &[&str] = &["kill", "delete"];
 const DEFAULT_SESSION_KEYS: &[&str] = &["startup_command", "preview_command", "layout"];

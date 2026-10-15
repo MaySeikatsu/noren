@@ -27,7 +27,7 @@ noren merges your **running zellij sessions**, **[zoxide](https://github.com/aje
 
 - **One picker, three sources** — live/exited sessions, zoxide dirs, `[[session]]` config entries; deduplicated (sessions beat config beat dirs), sorted so the most relevant row sits next to the prompt, with a dim hairline separating sessions from folders.
 - **Session-aware everywhere** — inside zellij it switches your client in place (via the [zellij-switch](https://github.com/mostafaqanbaryan/zellij-switch) plugin — never nested attaches); outside it exec's `zellij attach --create`.
-- **Live previews** — a running session's preview shows what its focused pane displays *right now*, refreshed while you look; `Ctrl l` flips to the layout view.
+- **Live previews** — a running session's preview shows what its focused pane displays *right now*, refreshed while you look. Optionally all tabs side by side (`live_all_tabs`). The preview's label always says what it shows — `● live`, or `▦ layout — session not running` when a live view isn't possible.
 - **Layout previews without resurrection** — the pane layout drawn as box art (focused pane highlighted, running programs labeled), rendered *only* from zellij's serialized layout cache. Exited sessions are never contacted, so hovering one can never wake it.
 - **Attached indicator** — ▣ marks sessions currently shown in a terminal, ▢ ones running in the background.
 - **Pinning** — pin sessions (shared, name-based) and folders (separate, path-based); pinned rows float to the prompt.
@@ -96,8 +96,9 @@ noren resolve <target> [--format env|json]
 | `Ctrl s` | snapshot menu of the selected session (⏎ restore, `Ctrl s` take one, `Ctrl d` delete, `Esc` back) |
 | `Ctrl k` | soft-kill the selected session |
 | `Ctrl d` | hard-delete the selected session |
-| `Ctrl /` | show / hide the preview |
-| `Ctrl l` | session previews: live screen ↔ saved layout |
+| `Ctrl /` | cycle the preview: live → layout → text → off |
+| `Alt Enter` | open the selected entry in a new terminal window (`terminal` in the config, else `$TERMINAL`) |
+| `F1` | all keys ↔ the compact overview |
 | `Ctrl h` | hide / unhide the selected session, folder or config entry |
 | `Alt h` | show hidden entries (marked ⊘) in the list, or not |
 | `Ctrl e` | rename the selected running session (type the name, `Enter` applies, `Esc` cancels) |

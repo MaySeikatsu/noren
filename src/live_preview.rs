@@ -136,14 +136,23 @@ fn tail_lines(screen: &str, rows: usize) -> Vec<&str> {
     lines[start..end].to_vec()
 }
 
+/// Why there is no live view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Miss {
+    /// The session isn't running (any more).
+    NotRunning,
+    /// Running, but zellij didn't answer usably (timeout, no terminal pane).
+    Unavailable,
+}
+
 /// Header + tab strip + the pane's current screen, fitted to cols × rows.
-pub fn render_live(name: &str, cols: usize, rows: usize) -> Option<String> {
-    render_live_at(name, None, cols, rows)
+pub fn render_live(name: &str, cols: usize, rows: usize, all_tabs: bool) -> Result<String, Miss> {
+    render_live_at(name, None, cols, rows, all_tabs)
 }
 
 /// Live view of one specific tab (0-based `position`; tab menu preview).
 pub fn render_live_tab(name: &str, position: usize, cols: usize, rows: usize) -> Option<String> {
-    render_live_at(name, Some(position), cols, rows)
+    render_live_at(name, Some(position), cols, rows, false).ok()
 }
 
 /// A running session's tabs for the tab menu: 1-based position, name,
@@ -169,21 +178,24 @@ pub fn tab_summaries(name: &str) -> Option<Vec<crate::tabs::TabInfo>> {
     )
 }
 
-fn render_live_at(name: &str, want: Option<usize>, cols: usize, rows: usize) -> Option<String> {
+fn render_live_at(
+    name: &str,
+    want: Option<usize>,
+    cols: usize,
+    rows: usize,
+    all_tabs: bool,
+) -> Result<String, Miss> {
     // `zellij action` with an unknown ZELLIJ_SESSION_NAME silently targets
     // whatever session is running (0.45.1) — make sure it's really ours and
     // really live (the list may be seconds old).
     if crate::sources::zellij::session_state(name) != Some("live") {
-        return None;
+        return Err(Miss::NotRunning);
     }
-    let tabs: Vec<Tab> = action_json(name, &["list-tabs", "-j", "-s"])?;
-    let panes: Vec<Pane> = action_json(name, &["list-panes", "-a", "-j"])?;
-    let tab = match want {
-        Some(p) if tabs.iter().any(|t| t.position == p) => p,
-        _ => pick_tab(name, &tabs)?,
-    };
-    let pane = pick_pane(&panes, tab)?;
-    let screen = action_output_with_timeout(
+    render_running(name, want, cols, rows, all_tabs).ok_or(Miss::Unavailable)
+}
+
+fn dump(name: &str, pane: &Pane) -> Option<String> {
+    action_output_with_timeout(
         name,
         &[
             "dump-screen",
@@ -192,7 +204,28 @@ fn render_live_at(name: &str, want: Option<usize>, cols: usize, rows: usize) -> 
             "--ansi",
         ],
         TIMEOUT_MS,
-    )?;
+    )
+}
+
+fn render_running(
+    name: &str,
+    want: Option<usize>,
+    cols: usize,
+    rows: usize,
+    all_tabs: bool,
+) -> Option<String> {
+    let tabs: Vec<Tab> = action_json(name, &["list-tabs", "-j", "-s"])?;
+    let panes: Vec<Pane> = action_json(name, &["list-panes", "-a", "-j"])?;
+    // A specific tab (tab menu) always shows that tab alone.
+    let tab = match want {
+        Some(p) if tabs.iter().any(|t| t.position == p) => p,
+        _ => pick_tab(name, &tabs)?,
+    };
+    if all_tabs && want.is_none() && tabs.len() > 1 {
+        return render_grid(name, &tabs, &panes, tab, cols, rows);
+    }
+    let pane = pick_pane(&panes, tab)?;
+    let screen = dump(name, pane)?;
 
     let tab_name = tabs
         .iter()
@@ -217,6 +250,111 @@ fn render_live_at(name: &str, want: Option<usize>, cols: usize, rows: usize) -> 
     } else {
         // Reset per line so a style left open by the dump can't bleed.
         out.extend(body.into_iter().map(|l| format!("{l}\x1b[0m")));
+    }
+    Some(out.join("\n"))
+}
+
+/// Terminal cells of a char: East Asian wide / emoji take two.
+fn char_cells(c: char) -> usize {
+    let u = u32::from(c);
+    let wide = (0x1100..=0x115F).contains(&u)
+        || (0x2E80..=0xA4CF).contains(&u)
+        || (0xAC00..=0xD7A3).contains(&u)
+        || (0xF900..=0xFAFF).contains(&u)
+        || (0xFE30..=0xFE4F).contains(&u)
+        || (0xFF00..=0xFF60).contains(&u)
+        || (0xFFE0..=0xFFE6).contains(&u)
+        || (0x1F300..=0x1FAFF).contains(&u)
+        || (0x20000..=0x3FFFD).contains(&u);
+    if wide { 2 } else { 1 }
+}
+
+/// Exactly `width` visible cells of an ANSI line: escapes kept, text cut
+/// (never mid wide-char), padded with spaces, style reset at the end so a
+/// grid cell can't bleed into its neighbour.
+fn fit(line: &str, width: usize) -> String {
+    let mut out = String::with_capacity(line.len() + width);
+    let mut used = 0;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            out.push(c);
+            for e in chars.by_ref() {
+                out.push(e);
+                if e.is_ascii_alphabetic() || e == '~' {
+                    break;
+                }
+            }
+            continue;
+        }
+        let w = char_cells(c);
+        if used + w > width {
+            break;
+        }
+        out.push(c);
+        used += w;
+    }
+    out.push_str("\x1b[0m");
+    out.extend(std::iter::repeat_n(' ', width - used));
+    out
+}
+
+/// All tabs side by side (live_all_tabs): a grid of each tab's focused
+/// pane, the active tab's title in reverse video. Background tabs keep
+/// their screens up to date in zellij, so every cell is live.
+fn render_grid(
+    name: &str,
+    tabs: &[Tab],
+    panes: &[Pane],
+    active: usize,
+    cols: usize,
+    rows: usize,
+) -> Option<String> {
+    let mut sorted: Vec<&Tab> = tabs.iter().collect();
+    sorted.sort_by_key(|t| t.position);
+    let n = sorted.len();
+    // As many columns as fit ≥ 28 cells wide; rows of ≥ 5 lines each.
+    let grid_cols = (cols / 28).clamp(1, n);
+    let avail = rows.saturating_sub(1); // the header line
+    let max_rows = (avail / 5).max(1);
+    let grid_rows = n.div_ceil(grid_cols).min(max_rows);
+    let shown = (grid_cols * grid_rows).min(n);
+    let cell_w = (cols + 1) / grid_cols - 1; // a 1-cell gutter between cells
+    let cell_h = (avail + 1) / grid_rows - 1; // a blank line between rows
+
+    let mut out = vec![format!(
+        "\x1b[32m●\x1b[0m \x1b[1m{}\x1b[0m",
+        truncate(&format!("{} tabs · {name}", n), cols.saturating_sub(2))
+    )];
+    for row in sorted[..shown].chunks(grid_cols) {
+        // Each cell: title line + the newest lines of its focused pane.
+        let cells: Vec<Vec<String>> = row
+            .iter()
+            .map(|t| {
+                let title = truncate(&format!(" {} ", t.name), cell_w);
+                let mut lines = vec![if t.position == active {
+                    format!("\x1b[7m{}", fit(&title, cell_w))
+                } else {
+                    format!("\x1b[1m{}", fit(&title, cell_w))
+                }];
+                let screen = pick_pane(panes, t.position)
+                    .and_then(|p| dump(name, p))
+                    .unwrap_or_default();
+                let body = tail_lines(&screen, cell_h.saturating_sub(1));
+                lines.extend(body.iter().map(|l| fit(l, cell_w)));
+                lines.resize(cell_h, " ".repeat(cell_w));
+                lines
+            })
+            .collect();
+        for i in 0..cell_h {
+            let parts: Vec<&str> = cells.iter().map(|c| c[i].as_str()).collect();
+            out.push(parts.join("\x1b[2m│\x1b[0m"));
+        }
+        out.push(String::new());
+    }
+    out.pop();
+    if shown < n {
+        out.push(format!("\x1b[2m+{} more tabs\x1b[0m", n - shown));
     }
     Some(out.join("\n"))
 }
@@ -294,6 +432,15 @@ mod tests {
         assert_eq!(tail_lines(screen, 2), vec!["\x1b[ma b", "\x1b[m$ "]);
         assert_eq!(tail_lines(screen, 10).len(), 4);
         assert!(tail_lines("\n\n", 5).is_empty());
+    }
+
+    #[test]
+    fn fit_cuts_pads_and_keeps_escapes() {
+        assert_eq!(fit("abc", 5), "abc\x1b[0m  ");
+        assert_eq!(fit("abcdef", 3), "abc\x1b[0m");
+        assert_eq!(fit("\x1b[31mred\x1b[0m!", 4), "\x1b[31mred\x1b[0m!\x1b[0m");
+        // A wide char that doesn't fit is left out, the gap padded.
+        assert_eq!(fit("ab日", 3), "ab\x1b[0m ");
     }
 
     #[test]

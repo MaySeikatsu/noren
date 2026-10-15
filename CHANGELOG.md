@@ -1,5 +1,32 @@
 # Release notes
 
+## 0.2.3
+
+**Compact key overview.** At most `header_lines` (2) lines of the main
+keys — views, reload, preview, pin, rename, kill, delete, connect, close —
+dropping the least important first when space runs out; `F1` (shown in the
+corner) toggles the full list. It wraps to the list pane and rewraps on
+resize. The config view is only listed when `[[session]]` entries exist.
+
+**One preview key.** `Ctrl /` cycles live → layout → text → off (replacing
+0.2.0's `Ctrl l`; `keys.live` still works as an alias). The preview labels
+itself with what it actually shows — `preview · ● live`,
+`▦ layout — session not running`, `≡ text`, `📁 folder`, `📸 snapshot`.
+
+**Open in a new window.** `Alt Enter` opens the selected entry in a new
+terminal window (`terminal` in the config — a name or a `{}` template —
+else `$TERMINAL`, else the first known emulator); the picker stays open.
+
+**All tabs live (opt-in).** `live_all_tabs = true` turns the live preview
+into a grid of every tab's focused pane — background tabs stay current —
+side by side when there's room, stacked when narrow; the active tab's title
+is highlighted.
+
+**Auto-reload.** While the picker is open the list re-lists itself every
+`auto_reload_secs` (60; `0` = off), so sessions started or ended elsewhere
+don't show stale states. The cursor stays on the same entry across reloads,
+and a pending confirmation or rename is never interrupted.
+
 ## 0.2.2
 
 **Tab menu.** `Alt t` on a session opens its tabs: name, focused program and
@@ -44,9 +71,6 @@ that folder: `⏎` connects to it, or — if it doesn't exist — asks
 names + paths.
 
 **`↩` marks the `noren last` target** in the list.
-
-**Key overview wraps** to the width of the list pane (and rewraps on
-resize), so binds are no longer cut off in narrow or floating panes.
 
 Fixes: snapshot tab counts no longer include tab templates; the live
 preview could show another running session when the previewed one had

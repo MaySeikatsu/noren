@@ -30,10 +30,6 @@ const VIEWS: &[(&str, &str, &str)] = &[
 ];
 const DEFAULT_PROMPT: &str = "⚡  ";
 const HINT: &str = "type to filter · ⏎ on no match creates a session";
-/// Preview labels; the live/layout toggle reads the current one back from
-/// $FZF_PREVIEW_LABEL.
-const LABEL_LIVE: &str = " ● live ";
-const LABEL_LAYOUT: &str = " ▦ layout ";
 /// Snapshot menu: prompt is "📸 <session>  "; its rows come from
 /// `noren snapshot-rows <session>`.
 const SNAP_PREFIX: &str = "📸 ";
@@ -64,86 +60,239 @@ fn view_source(prompt: &str) -> &'static str {
         .unwrap_or("all")
 }
 
-/// "ctrl-t" -> "^t", "alt-x" -> "M-x", "ctrl-alt-d" -> "^M-d".
+/// "ctrl-t" -> "^t", "alt-x" -> "M-x", "ctrl-alt-d" -> "^M-d",
+/// "alt-enter" -> "M-⏎".
 fn pretty_key(key: &str) -> String {
     let mut k = key.trim().to_string();
-    for (from, to) in [("ctrl-", "^"), ("alt-", "M-")] {
+    for (from, to) in [("ctrl-", "^"), ("alt-", "M-"), ("enter", "⏎")] {
         k = k.replace(from, to);
     }
     k
 }
 
-/// Header: views/list controls, then row actions — each group wrapped to
-/// `width` columns (the list pane) so no bind is ever cut off. Keys bold,
-/// labels dim; config warnings (if any) on top in yellow.
-fn header(cfg: &Config, warnings: &[String], width: Option<usize>) -> String {
+/// One key-overview entry: action, label, priority (lower = kept longer
+/// when the compact overview runs out of room).
+type Entry = (&'static str, &'static str, u8);
+
+/// Compact overview, line 1: views and list controls.
+const COMPACT_VIEWS: &[Entry] = &[
+    ("sessions", "sessions", 1),
+    ("dirs", "dirs", 2),
+    ("config", "config", 6),
+    ("all", "all", 3),
+    ("reload", "reload", 5),
+    ("preview", "preview", 4),
+];
+/// Compact overview, line 2: row actions, then ⏎ / esc.
+const COMPACT_ACTIONS: &[Entry] = &[
+    ("pin", "pin", 6),
+    ("rename", "rename", 5),
+    ("kill", "kill", 3),
+    ("delete", "delete", 4),
+    ("enter", "connect", 1),
+    ("esc", "close", 2),
+];
+/// Everything else, in the full overview (F1).
+const FULL_MORE: &[Entry] = &[
+    ("new_window", "new window", 0),
+    ("snapshot", "snapshots", 0),
+    ("tabs", "tabs", 0),
+    ("hide", "hide", 0),
+    ("hidden", "show hidden", 0),
+    ("paths", "search paths", 0),
+];
+
+/// Key overview above the prompt. Compact (default): at most
+/// `header_lines` lines of the most used keys — entries that don't fit
+/// are dropped by priority — with "F1 all keys" in the bottom-right
+/// corner. Full: every bind, wrapped to `width`. Config warnings go on top.
+fn header(cfg: &Config, warnings: &[String], width: Option<usize>, full: bool) -> String {
     let binds = effective_binds(cfg);
-    // (plain width, styled text)
-    let item = |action: &str, label: &str| {
-        binds.iter().find(|(a, _)| *a == action).map(|(_, k)| {
-            let key = pretty_key(k);
-            (
-                key.chars().count() + 1 + label.chars().count(),
-                format!("\x1b[1m{key}\x1b[0m \x1b[2m{label}\x1b[0m"),
-            )
-        })
+    let key_of = |action: &str| -> Option<String> {
+        match action {
+            "enter" => Some("⏎".to_string()),
+            "esc" => Some("esc".to_string()),
+            _ => binds
+                .iter()
+                .find(|(a, _)| *a == action)
+                .map(|(_, k)| pretty_key(k)),
+        }
     };
-    let fixed = |key: &str, label: &str| {
-        Some((
+    // The config view is empty without [[session]] entries — don't
+    // advertise it.
+    let wanted = |action: &str| action != "config" || !cfg.session.is_empty();
+    let cell = |key: &str, label: &str| {
+        (
             key.chars().count() + 1 + label.chars().count(),
             format!("\x1b[1m{key}\x1b[0m \x1b[2m{label}\x1b[0m"),
-        ))
+        )
     };
-    let wrap = |items: Vec<Option<(usize, String)>>| {
-        let max = width.unwrap_or(usize::MAX).max(10);
-        let mut lines: Vec<String> = Vec::new();
-        let (mut cur, mut cur_w) = (String::new(), 0usize);
-        for (w, text) in items.into_iter().flatten() {
-            if cur_w > 0 && cur_w + 2 + w > max {
-                lines.push(std::mem::take(&mut cur));
-                cur_w = 0;
-            }
-            if cur_w > 0 {
-                cur.push_str("  ");
-                cur_w += 2;
-            }
-            cur.push_str(&text);
-            cur_w += w;
-        }
-        if cur_w > 0 {
-            lines.push(cur);
-        }
-        lines
+    let entries = |list: &[Entry]| -> Vec<(u8, usize, String)> {
+        list.iter()
+            .filter(|(a, _, _)| wanted(a))
+            .filter_map(|(a, label, prio)| {
+                key_of(a).map(|k| {
+                    let (w, text) = cell(&k, label);
+                    (*prio, w, text)
+                })
+            })
+            .collect()
     };
-    let views = wrap(vec![
-        item("sessions", "sessions"),
-        item("dirs", "dirs"),
-        item("config", "config"),
-        item("all", "all"),
-        item("hidden", "show hidden"),
-        item("paths", "search paths"),
-        item("reload", "reload"),
-        item("preview", "preview"),
-        item("live", "live/layout"),
-    ]);
-    let acts = wrap(vec![
-        fixed("⏎", "connect"),
-        item("pin", "pin"),
-        item("hide", "hide"),
-        item("rename", "rename"),
-        item("snapshot", "snapshots"),
-        item("tabs", "tabs"),
-        item("kill", "kill"),
-        item("delete", "delete"),
-        fixed("esc", "close"),
-    ]);
+    let help_key = key_of("help");
+    let max = width.unwrap_or(usize::MAX).max(10);
+
     let mut out: Vec<String> = warnings
         .iter()
         .map(|w| format!("\x1b[33m⚠ {w}\x1b[0m"))
         .collect();
-    out.extend(views);
-    out.extend(acts);
+
+    if full {
+        let mut all = entries(COMPACT_VIEWS);
+        all.extend(entries(FULL_MORE));
+        all.extend(entries(COMPACT_ACTIONS));
+        if let Some(k) = &help_key {
+            let (w, t) = cell(k, "less");
+            all.push((0, w, t));
+        }
+        out.extend(wrap_cells(&all, max));
+        return out.join("\n");
+    }
+
+    let lines = cfg.header_lines.max(1);
+    let help = help_key.map(|k| cell(&k, "more"));
+    let mut groups = vec![entries(COMPACT_VIEWS), entries(COMPACT_ACTIONS)];
+    if lines == 1 {
+        let merged = groups.concat();
+        groups = vec![merged];
+    }
+    // Lines per group: views get the smaller half.
+    let per_group: Vec<usize> = if groups.len() == 1 {
+        vec![1]
+    } else {
+        vec![lines / 2, lines - lines / 2]
+    };
+    // The F1 hint goes to the bottom-right corner — or, if that would cost
+    // more keys than ending the first line with it, there.
+    let hint_w = help.as_ref().map_or(0, |(w, _)| w + 2);
+    let fit_group = |mut cells: Vec<(u8, usize, String)>, budget: usize, reserve: usize| {
+        // Drop the lowest-priority entries until the group fits.
+        let mut dropped = 0;
+        while !cells.is_empty() && !fits(&cells, max, budget, reserve) {
+            let worst = cells
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, (p, _, _))| *p)
+                .map(|(i, _)| i)
+                .expect("non-empty");
+            cells.remove(worst);
+            dropped += 1;
+        }
+        (cells, dropped)
+    };
+    let last = groups.len() - 1;
+    let place = |hint_group: usize| {
+        let fitted: Vec<_> = groups
+            .iter()
+            .enumerate()
+            .map(|(gi, cells)| {
+                let reserve = if gi == hint_group { hint_w } else { 0 };
+                fit_group(cells.clone(), per_group[gi], reserve)
+            })
+            .collect();
+        let dropped: usize = fitted.iter().map(|(_, d)| d).sum();
+        (fitted, dropped)
+    };
+    let (bottom, bottom_drops) = place(last);
+    let (fitted, hint_group) = if last > 0 && bottom_drops > 0 {
+        let (top, top_drops) = place(0);
+        if top_drops < bottom_drops {
+            (top, 0)
+        } else {
+            (bottom, last)
+        }
+    } else {
+        (bottom, last)
+    };
+    for (gi, (cells, _)) in fitted.into_iter().enumerate() {
+        let mut wrapped = wrap_cells(&cells, max);
+        if gi == hint_group
+            && let Some((hw, ht)) = &help
+        {
+            let mut last = wrapped.pop().unwrap_or_default();
+            // No room left on the last line: the hint gets its own (fits()
+            // only allows that when the budget has a spare line).
+            if !last.is_empty() && visible_width(&last) + 2 + hw > max {
+                wrapped.push(last);
+                last = String::new();
+            }
+            let used = visible_width(&last);
+            let gap = if width.is_some() {
+                max.saturating_sub(used + hw)
+                    .max(if used == 0 { 0 } else { 2 })
+            } else if used == 0 {
+                0
+            } else {
+                2
+            };
+            wrapped.push(format!("{last}{:gap$}{ht}", ""));
+        }
+        out.extend(wrapped);
+    }
     out.join("\n")
+}
+
+/// Greedy wrap of (prio, width, text) cells into lines of `max` columns.
+fn wrap_cells(cells: &[(u8, usize, String)], max: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let (mut cur, mut cur_w) = (String::new(), 0usize);
+    for (_, w, text) in cells {
+        if cur_w > 0 && cur_w + 2 + w > max {
+            lines.push(std::mem::take(&mut cur));
+            cur_w = 0;
+        }
+        if cur_w > 0 {
+            cur.push_str("  ");
+            cur_w += 2;
+        }
+        cur.push_str(text);
+        cur_w += w;
+    }
+    if cur_w > 0 {
+        lines.push(cur);
+    }
+    lines
+}
+
+/// Do the cells wrap into `budget` lines, leaving `reserve` columns free
+/// at the end of the last one?
+fn fits(cells: &[(u8, usize, String)], max: usize, budget: usize, reserve: usize) -> bool {
+    let mut lines = 1usize;
+    let mut cur = 0usize;
+    for (_, w, _) in cells {
+        let need = if cur == 0 { *w } else { cur + 2 + w };
+        if need > max {
+            lines += 1;
+            cur = *w;
+        } else {
+            cur = need;
+        }
+    }
+    lines < budget || (lines == budget && cur + reserve <= max)
+}
+
+/// Columns a styled header line occupies.
+fn visible_width(s: &str) -> usize {
+    let mut n = 0;
+    let mut esc = false;
+    for c in s.chars() {
+        match (esc, c) {
+            (false, '\x1b') => esc = true,
+            (true, c) if c.is_ascii_alphabetic() => esc = false,
+            (false, _) => n += 1,
+            _ => {}
+        }
+    }
+    n
 }
 
 /// Columns the header gets: the list pane, i.e. the terminal minus a
@@ -180,13 +329,15 @@ fn fzf_binds(cfg: &Config, exe: &str) -> Vec<String> {
             "pin" | "snapshot" | "kill" | "delete" => {
                 format!("transform({exe} pick {action} {{}})")
             }
-            "preview" => "toggle-preview".to_string(),
+            // One key cycles the preview: live → layout → text → off.
+            "preview" | "live" => format!("transform({exe} pick preview-mode)"),
             "hide" => format!("transform({exe} pick hide {{}})"),
             "rename" => format!("transform({exe} pick rename {{}})"),
             "tabs" => format!("transform({exe} pick tabs {{}})"),
             "paths" => format!("transform({exe} pick paths)"),
+            "help" => format!("transform({exe} pick help)"),
+            "new_window" => format!("transform({exe} pick new-window {{}})"),
             "hidden" => format!("transform({exe} pick show-hidden)"),
-            "live" => format!("transform({exe} pick preview-mode)"),
             view => {
                 let (_, prompt, src) = VIEWS
                     .iter()
@@ -226,6 +377,11 @@ pub fn picker() -> anyhow::Result<()> {
     cmd.args([
         "--ansi",
         "--tiebreak=index",
+        // Keep the cursor on the same entry across reloads (auto-reload,
+        // pin, kill, …): identity = source, name, path.
+        "--track",
+        "--id-nth",
+        "1..3",
         "--delimiter",
         "\t",
         // Name (5) and dimmed path (6) are shown; only the name is matched.
@@ -240,29 +396,25 @@ pub fn picker() -> anyhow::Result<()> {
         "--ghost",
         HINT,
         "--header",
-        &header(&cfg, &warnings, None),
+        &header(&cfg, &warnings, None, false),
         // Binds are written for POSIX sh, whatever the user's $SHELL is.
         "--with-shell",
         "sh -c",
         "--preview",
         &format!("{exe} preview {{}}"),
+        // The preview replaces this with what it actually shows.
         "--preview-label",
-        if cfg.preview_mode == "live" {
-            LABEL_LIVE
-        } else {
-            LABEL_LAYOUT
-        },
+        " preview ",
         "--preview-window",
         &cfg.preview_window(),
     ]);
     for b in fzf_binds(&cfg, &exe) {
         cmd.arg("--bind").arg(b);
     }
-    // Live previews refresh on a timer through fzf's HTTP API.
-    // Unix socket paths max out at ~107 bytes; skip refreshing rather than
-    // fail to start fzf in an exotic runtime dir.
-    let sock =
-        Some(fzf_socket(&id)).filter(|p| cfg.live_refresh_ms > 0 && p.as_os_str().len() < 100);
+    // fzf's HTTP API: previews set their own label through it, and live
+    // previews refresh on a timer. Unix socket paths max out at ~107 bytes;
+    // go without rather than fail to start fzf in an exotic runtime dir.
+    let sock = Some(fzf_socket(&id)).filter(|p| p.as_os_str().len() < 100);
     if let Some(sock) = &sock {
         cmd.arg("--listen").arg(sock);
     }
@@ -282,11 +434,17 @@ pub fn picker() -> anyhow::Result<()> {
         .write_all(format!("{tsv}\n").as_bytes())
         .ok();
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let refresher = sock.clone().map(|sock| {
-        let stop = stop.clone();
-        let every = std::time::Duration::from_millis(cfg.live_refresh_ms.max(200));
-        std::thread::spawn(move || refresh_live_preview(&sock, every, &stop))
-    });
+    let refresher = sock
+        .clone()
+        .filter(|_| cfg.live_refresh_ms > 0 || cfg.auto_reload_secs > 0)
+        .map(|sock| {
+            let stop = stop.clone();
+            let ms = std::time::Duration::from_millis;
+            let live = (cfg.live_refresh_ms > 0).then(|| ms(cfg.live_refresh_ms.max(200)));
+            let list = (cfg.auto_reload_secs > 0).then(|| ms(cfg.auto_reload_secs.max(5) * 1000));
+            let exe = exe.clone();
+            std::thread::spawn(move || refresh_loop(&sock, &exe, live, list, &stop))
+        });
     let out = child.wait_with_output()?;
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
     if let Some(t) = refresher {
@@ -297,6 +455,8 @@ pub fn picker() -> anyhow::Result<()> {
     }
     let _ = std::fs::remove_file(pending_file(&id));
     let _ = std::fs::remove_file(show_hidden_file(&id));
+    let _ = std::fs::remove_file(mode_file(&id));
+    let _ = std::fs::remove_file(keys_file(&id));
 
     // Non-zero = esc / ctrl-c abort; just close the picker.
     if !out.status.success() {
@@ -370,6 +530,14 @@ fn fzf_socket(id: &str) -> PathBuf {
     runtime_dir().join(format!("noren-fzf-{id}.sock"))
 }
 
+/// Send fzf actions from a child process (preview, transform) through the
+/// socket fzf exports as $FZF_SOCK. No-op outside the picker.
+pub(crate) fn fzf_post(actions: &str) {
+    if let Some(sock) = std::env::var_os("FZF_SOCK") {
+        let _ = fzf_http(std::path::Path::new(&sock), "POST", actions);
+    }
+}
+
 /// One HTTP/1.0 exchange with fzf's --listen server; the response body.
 fn fzf_http(sock: &std::path::Path, method: &str, body: &str) -> Option<String> {
     use std::io::Read;
@@ -402,26 +570,44 @@ fn current_row_is_live(state: &str) -> bool {
         .is_some_and(|t| t.split('\t').nth(3) == Some("live"))
 }
 
-/// While the picker runs: every `every`, re-render the preview if the
-/// cursor sits on a live session (other previews don't change on their
-/// own, and re-running e.g. eza would only flicker).
-fn refresh_live_preview(
+/// While the picker runs:
+/// - every `live`: re-render the preview if the cursor sits on a live
+///   session (other previews don't change on their own, and re-running
+///   e.g. eza would only flicker);
+/// - every `list`: re-list the current view, so sessions started or ended
+///   elsewhere don't show stale states (`pick auto-reload`, which skips
+///   while a confirmation or rename is pending).
+fn refresh_loop(
     sock: &std::path::Path,
-    every: std::time::Duration,
+    exe: &str,
+    live: Option<std::time::Duration>,
+    list: Option<std::time::Duration>,
     stop: &std::sync::atomic::AtomicBool,
 ) {
     use std::sync::atomic::Ordering;
     let tick = std::time::Duration::from_millis(50);
-    let mut waited = std::time::Duration::ZERO;
+    let (mut live_wait, mut list_wait) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
     while !stop.load(Ordering::Relaxed) {
         std::thread::sleep(tick);
-        waited += tick;
-        if waited < every {
-            continue;
+        live_wait += tick;
+        list_wait += tick;
+        if let Some(every) = list
+            && list_wait >= every
+        {
+            list_wait = std::time::Duration::ZERO;
+            let _ = fzf_http(
+                sock,
+                "POST",
+                &act("transform", &format!("{exe} pick auto-reload")),
+            );
         }
-        waited = std::time::Duration::ZERO;
-        if fzf_http(sock, "GET", "").is_some_and(|st| current_row_is_live(&st)) {
-            let _ = fzf_http(sock, "POST", "refresh-preview");
+        if let Some(every) = live
+            && live_wait >= every
+        {
+            live_wait = std::time::Duration::ZERO;
+            if fzf_http(sock, "GET", "").is_some_and(|st| current_row_is_live(&st)) {
+                let _ = fzf_http(sock, "POST", "refresh-preview");
+            }
         }
     }
 }
@@ -430,7 +616,7 @@ fn refresh_live_preview(
 
 /// An fzf action with an argument, using a delimiter pair the argument
 /// doesn't contain (names/messages may contain parentheses).
-fn act(name: &str, arg: &str) -> String {
+pub(crate) fn act(name: &str, arg: &str) -> String {
     for (open, close) in [
         ('(', ')'),
         ('[', ']'),
@@ -589,6 +775,25 @@ fn reload(exe: &str, prompt: &str) -> String {
     act("reload", &cmd)
 }
 
+/// Preview style chosen with ^/ ("live" | "layout" | "text" | "off");
+/// absent = the config's preview_mode.
+fn mode_file(id: &str) -> PathBuf {
+    runtime_dir().join(format!("noren-pick-{id}.mode"))
+}
+
+/// The picker's live/layout override, for `noren preview`.
+pub fn preview_mode_override() -> Option<String> {
+    let id = std::env::var("NOREN_PICKER_ID").ok()?;
+    std::fs::read_to_string(mode_file(&id))
+        .ok()
+        .filter(|m| matches!(m.as_str(), "live" | "layout" | "text" | "off"))
+}
+
+/// Present while the full key overview is shown (F1).
+fn keys_file(id: &str) -> PathBuf {
+    runtime_dir().join(format!("noren-pick-{id}.keys"))
+}
+
 /// Present while the picker lists hidden entries (Alt h).
 fn show_hidden_file(id: &str) -> PathBuf {
     runtime_dir().join(format!("noren-pick-{id}.hidden"))
@@ -711,21 +916,39 @@ pub fn pick(event: &str, line: &str) {
                 }
             }
         },
+        // Timer-driven (auto_reload_secs): quietly re-list the view; never
+        // disturb a pending confirmation or an in-progress rename.
+        "auto-reload" => match active_pending() {
+            Some(_) => String::new(),
+            None => reload(&exe, &fzf_prompt()),
+        },
         "reload" => match active_pending() {
             Some(p) => restore(&exe, &p, HINT),
             None => format!("{}+{}", reload(&exe, &fzf_prompt()), ghost(HINT)),
         },
-        "preview-mode" => toggle_preview_mode(&exe),
+        "preview-mode" => toggle_preview_mode(&cfg),
         "header" => {
             let (cfg, warnings) = Config::load_with_warnings();
             let width = std::env::var("FZF_COLUMNS")
                 .ok()
                 .and_then(|c| c.parse().ok())
                 .map(|c| header_width(&cfg, c));
-            header(&cfg, &warnings, width)
+            let full = keys_file(&picker_id()).exists();
+            header(&cfg, &warnings, width, full)
+        }
+        "help" => {
+            // F1: full ↔ compact key overview.
+            let f = keys_file(&picker_id());
+            if f.exists() {
+                let _ = std::fs::remove_file(&f);
+            } else {
+                let _ = std::fs::write(&f, "");
+            }
+            act("transform-header", &format!("{exe} pick header"))
         }
         "hide" => hide(&cfg, &exe, line),
         "rename" => start_rename(&row),
+        "new-window" => new_window(&cfg, line),
         "paths" => toggle_path_search(),
         "show-hidden" => toggle_show_hidden(&exe),
         "pin" => pin(&cfg, &exe, &row),
@@ -794,6 +1017,27 @@ fn confirm_or_run(cfg: &Config, exe: &str, kind: Kind, row: &Row) -> String {
         "rebind(change)".to_string(),
     ]
     .join("+")
+}
+
+/// Alt ⏎: open the selected row in a new terminal window; the picker
+/// stays open.
+fn new_window(cfg: &Config, line: &str) -> String {
+    if active_pending().is_some() {
+        return String::new();
+    }
+    let Some(target) = target_for(line).filter(|_| line.contains('\t')) else {
+        return ghost("✗ select a session, folder or config entry");
+    };
+    if snap_view(&fzf_prompt()).is_some() {
+        return ghost("✗ not in the snapshot menu — esc back first");
+    }
+    match crate::terminal::open(cfg, &self_exe(), &target) {
+        Ok(term) => ghost(&format!(
+            "↗ opened {} in a new {term} window",
+            parse_row(line).name
+        )),
+        Err(e) => ghost(&format!("✗ {e}")),
+    }
 }
 
 /// ^e: rename the selected running session — the prompt turns into an
@@ -948,22 +1192,26 @@ fn toggle_show_hidden(exe: &str) -> String {
     format!("{}+{}", reload(exe, &fzf_prompt()), ghost(msg))
 }
 
-/// Live ↔ layout for session previews, tracked in the preview label.
-fn toggle_preview_mode(exe: &str) -> String {
-    let now_live = std::env::var("FZF_PREVIEW_LABEL").is_ok_and(|l| l == LABEL_LIVE);
-    let (mode, label) = if now_live {
-        ("layout", LABEL_LAYOUT)
-    } else {
-        ("live", LABEL_LIVE)
+/// ^/: cycle the preview live → layout → text → off → live. The preview
+/// re-renders and labels itself with what it shows.
+fn toggle_preview_mode(cfg: &Config) -> String {
+    let now = preview_mode_override().unwrap_or_else(|| match cfg.preview_mode.as_str() {
+        "live" | "text" => cfg.preview_mode.clone(),
+        _ => "layout".into(),
+    });
+    let next = match now.as_str() {
+        "live" => "layout",
+        "layout" => "text",
+        "text" => "off",
+        _ => "live",
     };
-    format!(
-        "{}+{}",
-        act(
-            "change-preview",
-            &format!("{exe} preview --mode {mode} {{}}")
-        ),
-        act("change-preview-label", label)
-    )
+    let _ = std::fs::write(mode_file(&picker_id()), next);
+    let msg = ghost(&format!("preview: {next}"));
+    match (now.as_str(), next) {
+        (_, "off") => format!("hide-preview+{msg}"),
+        ("off", _) => format!("show-preview+refresh-preview+{msg}"),
+        _ => format!("refresh-preview+{msg}"),
+    }
 }
 
 fn pin(cfg: &Config, exe: &str, row: &Row) -> String {
@@ -1194,47 +1442,124 @@ mod tests {
     }
 
     #[test]
-    fn header_lists_every_active_bind_and_skips_disabled() {
-        let mut cfg = Config::default();
-        let h = header(&cfg, &[], None);
+    fn compact_header_shows_the_main_keys_and_the_f1_hint() {
+        let cfg = Config::default();
+        let h = header(&cfg, &[], None, false);
+        assert_eq!(h.lines().count(), 2, "{h}");
         for k in [
-            "^t", "^z", "^f", "^a", "^r", "^/", "^l", "^p", "^s", "^k", "^d",
+            "^t", "^z", "^a", "^r", "^/", "^p", "^e", "^k", "^d", "⏎", "esc", "f1",
         ] {
-            assert!(h.contains(k), "header missing {k}: {h}");
+            assert!(h.contains(k), "compact header missing {k}: {h}");
         }
-        cfg.keys.snapshot = String::new();
-        assert!(!header(&cfg, &[], None).contains("snapshot"));
+        // Secondary keys live in the full overview only.
+        for k in ["^s", "^h", "M-h", "M-p"] {
+            assert!(!h.contains(k), "compact header shows {k}: {h}");
+        }
+        // No [[session]] entries: the config view isn't advertised.
+        assert!(!h.contains("^f"), "{h}");
+        let with_sessions = Config {
+            session: vec![crate::config::SessionEntry::default()],
+            ..Config::default()
+        };
+        assert!(header(&with_sessions, &[], None, false).contains("^f"));
+        // connect + close come last on the actions line, F1 after them.
+        let line2 = visible(h.lines().nth(1).unwrap());
+        assert!(line2.ends_with("⏎ connect  esc close  f1 more"), "{line2}");
     }
 
     #[test]
-    fn header_wraps_to_the_list_pane_and_keeps_every_bind() {
+    fn hint_moves_up_rather_than_dropping_pin_and_rename() {
         let cfg = Config::default();
+        // 61 columns = the list pane of a 160-column picker.
+        // Every compact key fits; the hint moves up instead of costing
+        // pin/rename.
+        let h = header(&cfg, &[], Some(61), false);
+        for k in [
+            "^t", "^z", "^a", "^r", "^/", "^p", "^e", "^k", "^d", "⏎", "esc", "f1",
+        ] {
+            assert!(h.contains(k), "missing {k}: {h}");
+        }
+        assert!(
+            visible(h.lines().next().unwrap()).ends_with("f1 more"),
+            "{h}"
+        );
+        // Roomy: the hint stays in the bottom-right corner.
+        let h = header(&cfg, &[], Some(120), false);
+        assert!(
+            visible(h.lines().nth(1).unwrap()).ends_with("f1 more"),
+            "{h}"
+        );
+    }
+
+    #[test]
+    fn full_header_has_every_bind_and_skips_disabled() {
+        let mut cfg = Config::default();
+        let h = header(&cfg, &[], Some(200), true);
+        for k in ["^s", "^h", "M-h", "M-p", "^/", "^e", "f1"] {
+            assert!(h.contains(k), "full header missing {k}: {h}");
+        }
+        assert!(h.contains("less"));
+        cfg.keys.snapshot = String::new();
+        assert!(!header(&cfg, &[], Some(200), true).contains("snapshot"));
+    }
+
+    fn visible(s: &str) -> String {
+        let mut out = String::new();
+        let mut esc = false;
+        for c in s.chars() {
+            match (esc, c) {
+                (false, '\x1b') => esc = true,
+                (true, c) if c.is_ascii_alphabetic() => esc = false,
+                (false, c) => out.push(c),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn compact_header_fits_its_line_budget_at_any_width() {
+        let mut cfg = Config::default();
         // 160 cols: preview beside (96), list 64 → header width 61.
         assert_eq!(header_width(&cfg, 160), 61);
         // 80 cols: preview would be 48 < 56 → above the list, full width.
         assert_eq!(header_width(&cfg, 80), 77);
-        let strip = |s: &str| {
-            let mut out = String::new();
-            let mut esc = false;
-            for c in s.chars() {
-                match (esc, c) {
-                    (false, '\x1b') => esc = true,
-                    (true, c) if c.is_ascii_alphabetic() => esc = false,
-                    (false, c) => out.push(c),
-                    _ => {}
+        for lines in [1, 2, 3] {
+            cfg.header_lines = lines;
+            for w in [30, 45, 61, 77, 140] {
+                let h = header(&cfg, &[], Some(w), false);
+                assert!(h.lines().count() <= lines, "{lines}/{w}: {h}");
+                for line in h.lines() {
+                    assert!(visible(line).chars().count() <= w, "{lines}/{w}: {line:?}");
+                }
+                // The most important keys and the F1 hint survive (a single
+                // 30-column line only has room for one key besides F1).
+                let must: &[&str] = if lines == 1 && w < 40 {
+                    &["f1"]
+                } else {
+                    &["^t", "⏎", "f1"]
+                };
+                for k in must {
+                    assert!(h.contains(k), "{lines}/{w}: missing {k} in {h}");
+                }
+                // F1 sits at the right edge (bottom line unless moving it
+                // up keeps more keys).
+                let hint = h
+                    .lines()
+                    .map(visible)
+                    .find(|l| l.ends_with("f1 more"))
+                    .unwrap_or_else(|| panic!("{lines}/{w}: no hint in {h}"));
+                if w >= 61 && lines >= 2 {
+                    assert_eq!(hint.chars().count(), w, "right-aligned: {hint:?}");
                 }
             }
-            out
-        };
-        for w in [30, 61, 77] {
-            let h = header(&cfg, &[], Some(w));
-            for line in h.lines() {
-                assert!(strip(line).chars().count() <= w, "{w}: {line:?}");
-            }
-            for k in ["^t", "^h", "M-h", "^l", "^d", "esc"] {
-                assert!(h.contains(k), "{w}: missing {k}");
-            }
         }
+        // Full overview wraps without dropping anything.
+        let full = header(&Config::default(), &[], Some(30), true);
+        for line in full.lines() {
+            assert!(visible(line).chars().count() <= 30, "{line:?}");
+        }
+        assert!(full.contains("M-p") && full.contains("^s"));
     }
 
     #[test]

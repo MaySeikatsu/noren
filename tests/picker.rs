@@ -554,11 +554,119 @@ fn separator_and_snapshot_rows_cannot_be_hidden() {
 }
 
 #[test]
-fn header_event_wraps_to_fzf_columns() {
+fn header_is_compact_and_f1_toggles_the_full_overview() {
     let env = setup();
-    let (out, _, _) = env.run_env(&["pick", "header"], &[("FZF_COLUMNS", "40")]);
-    assert!(out.lines().count() >= 4, "{out}");
-    assert!(out.contains("M-h") && out.contains("^h"), "{out}");
+    let rt = env.home.join("run");
+    fs::create_dir_all(&rt).unwrap();
+    let base = [
+        ("FZF_COLUMNS", "80"),
+        ("NOREN_PICKER_ID", "9"),
+        ("XDG_RUNTIME_DIR", rt.to_str().unwrap()),
+    ];
+    let (out, _, _) = env.run_env(&["pick", "header"], &base);
+    assert_eq!(out.lines().count(), 2, "{out}");
+    assert!(out.contains("f1") && !out.contains("M-h"), "{out}");
+    let (out, _, _) = env.run_env(&["pick", "help"], &base);
+    assert!(out.starts_with("transform-header("), "{out}");
+    let (out, _, _) = env.run_env(&["pick", "header"], &base);
+    assert!(
+        out.contains("M-h") && out.contains("^h") && out.contains("less"),
+        "{out}"
+    );
+    env.run_env(&["pick", "help"], &base);
+    let (out, _, _) = env.run_env(&["pick", "header"], &base);
+    assert_eq!(out.lines().count(), 2, "back to compact: {out}");
+}
+
+#[test]
+fn ctrl_slash_cycles_live_layout_text_off() {
+    let env = setup();
+    let steps: Vec<String> = (0..4)
+        .map(|_| pick(&env, &["preview-mode"], "⚡  ", ""))
+        .collect();
+    assert!(steps[0].starts_with("refresh-preview") && steps[0].contains("preview: layout"));
+    assert!(steps[1].starts_with("refresh-preview") && steps[1].contains("preview: text"));
+    assert!(steps[2].starts_with("hide-preview") && steps[2].contains("preview: off"));
+    assert!(
+        steps[3].starts_with("show-preview+refresh-preview") && steps[3].contains("preview: live")
+    );
+}
+
+/// A one-shot fake fzf --listen socket: returns the first request's body.
+fn fake_fzf(path: &std::path::Path) -> std::thread::JoinHandle<String> {
+    use std::io::{Read, Write};
+    let listener = std::os::unix::net::UnixListener::bind(path).unwrap();
+    std::thread::spawn(move || {
+        let (mut c, _) = listener.accept().unwrap();
+        c.set_read_timeout(Some(std::time::Duration::from_millis(500)))
+            .unwrap();
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 4096];
+        while let Ok(n) = c.read(&mut chunk) {
+            if n == 0 {
+                break;
+            }
+            buf.extend_from_slice(&chunk[..n]);
+            let req = String::from_utf8_lossy(&buf);
+            if let Some((head, body)) = req.split_once("\r\n\r\n") {
+                let len: usize = head
+                    .lines()
+                    .find_map(|l| l.strip_prefix("Content-Length: "))
+                    .and_then(|v| v.trim().parse().ok())
+                    .unwrap_or(0);
+                if body.len() >= len {
+                    break;
+                }
+            }
+        }
+        let _ = c.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+        let req = String::from_utf8_lossy(&buf).into_owned();
+        req.split_once("\r\n\r\n")
+            .map(|(_, b)| b.to_string())
+            .unwrap_or_default()
+    })
+}
+
+#[test]
+fn preview_labels_itself_with_what_it_shows() {
+    let env = setup();
+    let sock = env.home.join("f.sock");
+    for (row, mode, want) in [
+        (
+            "zellij\tdead\t\texited\t⊗ dead",
+            "live",
+            " preview · ▦ layout — session not running ",
+        ),
+        (
+            "zellij\tdead\t\texited\t⊗ dead",
+            "layout",
+            " preview · ▦ layout ",
+        ),
+        (
+            "zellij\tdead\t\texited\t⊗ dead",
+            "text",
+            " preview · ≡ text ",
+        ),
+        (
+            "zoxide\ttmp\t/tmp\tdir\ttmp",
+            "live",
+            " preview · 📁 folder ",
+        ),
+    ] {
+        let _ = fs::remove_file(&sock);
+        let server = fake_fzf(&sock);
+        let (_, err, ok) = env.run_env(
+            &["preview", "--mode", mode, row],
+            &[("FZF_SOCK", sock.to_str().unwrap())],
+        );
+        assert!(ok, "{err}");
+        let body = server.join().unwrap();
+        assert_eq!(
+            body,
+            format!("change-preview-label({want})"),
+            "{row} / {mode}"
+        );
+    }
 }
 
 // ---- rename / mkdir / path search ------------------------------------------
@@ -695,4 +803,96 @@ fn list_marks_the_last_session() {
             .unwrap()
             .contains('↩')
     );
+}
+
+// ---- new terminal window ---------------------------------------------------
+
+fn wait_for(path: &std::path::Path) -> String {
+    for _ in 0..100 {
+        if let Ok(s) = fs::read_to_string(path)
+            && !s.is_empty()
+        {
+            return s;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    String::new()
+}
+
+#[test]
+fn alt_enter_opens_the_row_in_a_new_terminal_outside_zellij() {
+    let env = setup();
+    // A fake terminal: records its argv and whether it inherited zellij.
+    env.stub(
+        "foot",
+        r#"echo "$@ | zellij=${ZELLIJ:-none} picker=${NOREN_PICKER_ID:-none}" > "$HOME/term.log""#,
+    );
+    let rt = env.home.join("run");
+    fs::create_dir_all(&rt).unwrap();
+    let (out, _, ok) = env.run_env(
+        &["pick", "new-window", &row("zellij", "bg", "live")],
+        &[
+            ("TERMINAL", "foot"),
+            ("ZELLIJ", "1"),
+            ("ZELLIJ_SESSION_NAME", "att"),
+            ("NOREN_PICKER_ID", "5"),
+            ("XDG_RUNTIME_DIR", rt.to_str().unwrap()),
+            ("FZF_PROMPT", "⚡  "),
+        ],
+    );
+    assert!(ok);
+    assert!(out.contains("↗ opened bg in a new foot window"), "{out}");
+    let log = wait_for(&env.home.join("term.log"));
+    assert!(
+        log.contains(" connect bg | zellij=none picker=none"),
+        "{log}"
+    );
+}
+
+#[test]
+fn terminal_template_from_config_is_used() {
+    let env = setup();
+    env.stub("myterm", r#"echo "$@" > "$HOME/term.log""#);
+    write_config(&env, "terminal = \"myterm --title noren {}\"\n");
+    let out = pick(
+        &env,
+        &["new-window", "zoxide\ttmp\t/tmp\tdir\ttmp"],
+        "⚡  ",
+        "",
+    );
+    assert!(out.contains("new myterm window"), "{out}");
+    let log = wait_for(&env.home.join("term.log"));
+    assert!(log.starts_with("--title noren "), "{log}");
+    assert!(log.trim_end().ends_with("connect /tmp"), "{log}");
+}
+
+#[test]
+fn no_terminal_found_explains() {
+    let env = setup();
+    write_config(&env, "terminal = \"definitely-not-installed-term\"\n");
+    let out = pick(
+        &env,
+        &["new-window", &row("zellij", "bg", "live")],
+        "⚡  ",
+        "",
+    );
+    assert!(out.contains("no terminal found"), "{out}");
+}
+
+#[test]
+fn auto_reload_relists_the_view_but_never_disturbs_a_pending_action() {
+    let env = setup();
+    let out = pick(&env, &["auto-reload"], "▢  ", "");
+    assert!(
+        out.starts_with("reload(") && out.contains(" list zellij)"),
+        "{out}"
+    );
+    assert!(!out.contains("change-ghost"), "quiet: {out}");
+    // In the snapshot menu it re-lists the snapshots.
+    let out = pick(&env, &["auto-reload"], "📸 bg  ", "");
+    assert!(out.contains(" snapshot-rows 'bg')"), "{out}");
+    // Mid-confirmation: nothing.
+    pick(&env, &["delete", &row("zellij", "bg", "live")], "▢  ", "");
+    let prompt = "⚠ delete running session bg? y/N ";
+    assert_eq!(pick(&env, &["auto-reload"], prompt, ""), "");
 }

@@ -12,6 +12,7 @@ mod snapshot;
 mod sources;
 mod state;
 mod tabs;
+mod terminal;
 mod util;
 mod window;
 
