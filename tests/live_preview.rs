@@ -11,6 +11,7 @@ use common::*;
 /// a shell in ~/proj, a floating picker pane on top), dump with history and
 /// trailing blank lines.
 const ZELLIJ: &str = r#"echo "$@" >> "$HOME/zellij-args.log"
+[ "$1" = list-sessions ] && { echo "lv [Created 1h ago]"; exit 0; }
 [ "$1" = action ] || exit 0
 case "$2" in
   list-tabs) echo '[{"position":0,"name":"notes","active":false},{"position":1,"name":"code","active":true}]';;
@@ -72,6 +73,22 @@ fn live_session_shows_focused_tiled_pane_of_active_tab() {
 }
 
 #[test]
+fn session_that_died_since_the_list_is_not_previewed_live() {
+    // The row still says live, but zellij no longer lists it: never ask
+    // `zellij action` (it would answer for some other running session).
+    let env =
+        setup("echo \"$@\" >> \"$HOME/zellij-args.log\"; [ \"$1\" = action ] && echo '[]'; exit 0");
+    let (out, _, ok) = env.run_env(&["preview", "zellij\tgone\t\tlive\t▢ gone"], &DIMS);
+    assert!(ok);
+    assert!(!out.contains("\x1b[32m●"), "{out}");
+    assert!(
+        !calls(&env).iter().any(|c| c.starts_with("action")),
+        "{:?}",
+        calls(&env)
+    );
+}
+
+#[test]
 fn exited_sessions_never_contact_zellij() {
     let env = setup(ZELLIJ);
     let (_, _, ok) = env.run_env(&["preview", "zellij\tdead\t\texited\t⊗ dead"], &DIMS);
@@ -99,7 +116,8 @@ fn layout_mode_and_layout_configs_never_contact_zellij() {
 
 #[test]
 fn hung_server_falls_back_to_layout_quickly() {
-    let env = setup("sleep 30");
+    let env =
+        setup("[ \"$1\" = list-sessions ] && { echo 'lv [Created 1h ago]'; exit 0; }\nsleep 30");
     let start = Instant::now();
     let (out, _, ok) = env.run_env(&["preview", "zellij\tlv\t\tlive\t▢ lv"], &DIMS);
     assert!(ok);
@@ -109,7 +127,9 @@ fn hung_server_falls_back_to_layout_quickly() {
 
 #[test]
 fn garbage_output_falls_back_to_layout() {
-    let env = setup("echo not-json");
+    let env = setup(
+        "[ \"$1\" = list-sessions ] && { echo 'lv [Created 1h ago]'; exit 0; }\necho not-json",
+    );
     let (out, _, ok) = env.run_env(&["preview", "zellij\tlv\t\tlive\t▢ lv"], &DIMS);
     assert!(ok);
     assert!(!out.contains("\x1b[32m●"), "{out}");

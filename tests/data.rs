@@ -137,7 +137,10 @@ fn record_last_outside_zellij_uses_the_last_file() {
 #[test]
 fn rename_carries_pin_history_and_snapshots() {
     let env = Env::new();
-    env.stub_zellij_logging();
+    env.stub(
+        "zellij",
+        "echo \"$@\" >> \"$HOME/zellij-args.log\"\n[ \"$1\" = list-sessions ] && echo \"old [Created 1h ago]\"\nexit 0",
+    );
     seed(&env, ".local/state/noren/last", "old");
     seed(&env, ".local/state/noren/previous", "other");
     seed(&env, ".local/state/zellij/pinned", "keep\nold\n");
@@ -150,7 +153,12 @@ fn rename_carries_pin_history_and_snapshots() {
     let (out, err, ok) = env.run_env(&["rename", "new"], INSIDE_OLD);
     assert!(ok, "stderr: {err}");
     assert_eq!(out, "renamed: old -> new\n");
-    assert_eq!(env.zellij_log(), vec!["action rename-session new"]);
+    let log: Vec<String> = env
+        .zellij_log()
+        .into_iter()
+        .filter(|l| !l.starts_with("list-sessions"))
+        .collect();
+    assert_eq!(log, vec!["action rename-session new"]);
 
     assert_eq!(read(&env, ".local/state/noren/last"), "new");
     assert_eq!(read(&env, ".local/state/noren/previous"), "other");
@@ -167,7 +175,10 @@ fn rename_carries_pin_history_and_snapshots() {
 #[test]
 fn rename_merges_snapshots_without_overwriting() {
     let env = Env::new();
-    env.stub_zellij_logging();
+    env.stub(
+        "zellij",
+        "echo \"$@\" >> \"$HOME/zellij-args.log\"\n[ \"$1\" = list-sessions ] && echo \"old [Created 1h ago]\"\nexit 0",
+    );
     seed(&env, ".local/state/noren/last", "other");
     seed(&env, ".local/state/noren/previous", "old");
     seed(&env, ".local/state/noren/snapshots/old/a.kdl", "old-a");

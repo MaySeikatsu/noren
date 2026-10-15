@@ -221,6 +221,21 @@ pub fn read_hidden() -> Vec<String> {
     read_lines(&hidden_file())
 }
 
+/// Rename carries a hidden session along.
+pub fn rename_hidden(old: &str, new: &str) {
+    let f = hidden_file();
+    let from = format!("session\t{old}");
+    let lines = read_lines(&f);
+    if lines.contains(&from) {
+        let to = format!("session\t{new}");
+        let renamed: Vec<String> = lines
+            .into_iter()
+            .map(|l| if l == from { to.clone() } else { l })
+            .collect();
+        write_lines(&f, &renamed);
+    }
+}
+
 /// Toggle an entry's hidden state; true = hidden now.
 pub fn hidden_toggle(key: &str) -> bool {
     toggle_line(&hidden_file(), key) == "pinned"

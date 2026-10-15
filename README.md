@@ -88,7 +88,7 @@ noren resolve <target> [--format env|json]
 
 | Key | Action |
 | --- | --- |
-| `Enter` | connect — or, with no match, create a session named after the query |
+| `Enter` | connect — with no match, create a session named after the query; a typed path (`~/x`, `/x`, `./x`) goes to that folder, offering to create it first |
 | `Ctrl t` / `Ctrl z` / `Ctrl f` / `Ctrl a` | view: sessions / dirs / config / all |
 | `Ctrl r` | reload the current view |
 | `Ctrl p` | pin toggle (sessions by name, dirs by path) |
@@ -99,9 +99,11 @@ noren resolve <target> [--format env|json]
 | `Ctrl l` | session previews: live screen ↔ saved layout |
 | `Ctrl h` | hide / unhide the selected session, folder or config entry |
 | `Alt h` | show hidden entries (marked ⊘) in the list, or not |
+| `Ctrl e` | rename the selected running session (type the name, `Enter` applies, `Esc` cancels) |
+| `Alt p` | search names only (default) or names + paths |
 | `Esc` | close (or cancel a pending confirmation) |
 
-All binds are configurable under `[keys]`; the header inside the picker is generated from the active set and wraps to the pane width, so no bind is ever cut off. noren's binds override fzf's defaults inside its picker only (e.g. `Ctrl h`, which some terminals send for Backspace — rebind `hide` if yours does). Kill and delete ask `y/N` right in the prompt line when the `[confirm]` policy says so (default: kill asks if a terminal is attached, delete asks if the session is running); killing or deleting the session you are in switches you away first.
+`↩` marks the session `noren last` would jump back to. All binds are configurable under `[keys]`; the header inside the picker is generated from the active set and wraps to the pane width, so no bind is ever cut off. noren's binds override fzf's defaults inside its picker only (e.g. `Ctrl h`, which some terminals send for Backspace — rebind `hide` if yours does). Kill and delete ask `y/N` right in the prompt line when the `[confirm]` policy says so (default: kill asks if a terminal is attached, delete asks if the session is running); killing or deleting the session you are in switches you away first.
 
 ## Configuration
 

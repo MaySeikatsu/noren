@@ -38,8 +38,9 @@ const LABEL_LAYOUT: &str = " ▦ layout ";
 /// `noren snapshot-rows <session>`.
 const SNAP_PREFIX: &str = "📸 ";
 const SNAP_HINT: &str = "⏎ restore · ^s snapshot now · ^d delete snapshot · esc back";
-/// stdout marker: restore after fzf exits (it may exec zellij).
+/// stdout markers for work done after fzf exits (it may exec zellij).
 const RESTORE_MARK: &str = "__noren_restore__\t";
+const MKDIR_MARK: &str = "__noren_mkdir__\t";
 
 /// The binary fzf binds re-exec. current_exe keeps the picker working when
 /// noren isn't on PATH (cargo target dir, nix result/).
@@ -116,6 +117,7 @@ fn header(cfg: &Config, warnings: &[String], width: Option<usize>) -> String {
         item("config", "config"),
         item("all", "all"),
         item("hidden", "show hidden"),
+        item("paths", "search paths"),
         item("reload", "reload"),
         item("preview", "preview"),
         item("live", "live/layout"),
@@ -124,6 +126,7 @@ fn header(cfg: &Config, warnings: &[String], width: Option<usize>) -> String {
         fixed("⏎", "connect"),
         item("pin", "pin"),
         item("hide", "hide"),
+        item("rename", "rename"),
         item("snapshot", "snapshots"),
         item("kill", "kill"),
         item("delete", "delete"),
@@ -174,6 +177,8 @@ fn fzf_binds(cfg: &Config, exe: &str) -> Vec<String> {
             }
             "preview" => "toggle-preview".to_string(),
             "hide" => format!("transform({exe} pick hide {{}})"),
+            "rename" => format!("transform({exe} pick rename {{}})"),
+            "paths" => format!("transform({exe} pick paths)"),
             "hidden" => format!("transform({exe} pick show-hidden)"),
             "live" => format!("transform({exe} pick preview-mode)"),
             view => {
@@ -295,6 +300,10 @@ pub fn picker() -> anyhow::Result<()> {
     let result = if let Some(rest) = stdout.lines().find_map(|l| l.strip_prefix(RESTORE_MARK)) {
         let (name, file) = rest.split_once('\t').unwrap_or((rest, ""));
         crate::snapshot::restore_snapshot(&cfg, name, std::path::Path::new(file), true)
+    } else if let Some(dir) = stdout.lines().find_map(|l| l.strip_prefix(MKDIR_MARK)) {
+        std::fs::create_dir_all(dir)
+            .map_err(anyhow::Error::from)
+            .and_then(|()| session_connect(&cfg, dir))
     } else {
         let Some(target) = target_for(stdout.trim()) else {
             return Ok(());
@@ -441,6 +450,10 @@ enum Action {
     Restore,
     /// Delete the snapshot file in `Pending::file`.
     DropSnapshot,
+    /// Rename the session to the query (⏎ commits; not a y/N).
+    Rename,
+    /// Create the folder in `Pending::file` and a session in it.
+    Mkdir,
 }
 
 impl Action {
@@ -450,6 +463,8 @@ impl Action {
             Action::Delete => "delete",
             Action::Restore => "restore",
             Action::DropSnapshot => "drop",
+            Action::Rename => "rename",
+            Action::Mkdir => "mkdir",
         }
     }
 
@@ -459,6 +474,8 @@ impl Action {
             Action::Delete,
             Action::Restore,
             Action::DropSnapshot,
+            Action::Rename,
+            Action::Mkdir,
         ]
         .into_iter()
         .find(|a| a.word() == w)
@@ -470,6 +487,8 @@ impl Action {
             Action::Delete => "delete cancelled",
             Action::Restore => "restore cancelled",
             Action::DropSnapshot => "snapshot kept",
+            Action::Rename => "rename cancelled",
+            Action::Mkdir => "nothing created",
         }
     }
 }
@@ -568,6 +587,7 @@ fn leave_confirm(p: &Pending) -> String {
     clear_pending();
     [
         "unbind(change)".to_string(),
+        "enable-search".to_string(),
         "change-query()".to_string(),
         act("change-prompt", &p.prev_prompt),
     ]
@@ -632,6 +652,7 @@ pub fn pick(event: &str, line: &str) {
     let row = parse_row(line);
     let out = match event {
         "enter" => match active_pending() {
+            Some(p) if p.action == Action::Rename => commit_rename(&exe, &p),
             // ⏎ answers the default: No.
             Some(p) => restore(&exe, &p, p.action.cancelled()),
             None => match row.source {
@@ -640,6 +661,10 @@ pub fn pick(event: &str, line: &str) {
                 "snapshot" => confirm_snapshot(Action::Restore, &row),
                 // No match in the snapshot menu: nothing to create.
                 _ if snap_view(&fzf_prompt()).is_some() => "ignore".to_string(),
+                // A path-like query means that path (names never start with
+                // / ~ ./): go there, or offer to create it — whatever fuzzy
+                // match happens to be under the cursor.
+                _ if path_query().is_some() => enter_path(&row),
                 _ => "accept-or-print-query".to_string(),
             },
         },
@@ -673,6 +698,8 @@ pub fn pick(event: &str, line: &str) {
             header(&cfg, &warnings, width)
         }
         "hide" => hide(&cfg, &exe, line),
+        "rename" => start_rename(&row),
+        "paths" => toggle_path_search(),
         "show-hidden" => toggle_show_hidden(&exe),
         "pin" => pin(&cfg, &exe, &row),
         "snapshot" => snapshot_key(&cfg, &exe, &row),
@@ -739,6 +766,99 @@ fn confirm_or_run(cfg: &Config, exe: &str, kind: Kind, row: &Row) -> String {
         "rebind(change)".to_string(),
     ]
     .join("+")
+}
+
+/// ^e: rename the selected running session — the prompt turns into an
+/// input prefilled with the name; ⏎ applies, esc cancels.
+fn start_rename(row: &Row) -> String {
+    if active_pending().is_some() {
+        return String::new();
+    }
+    if row.source != "zellij" || row.name.is_empty() {
+        return ghost("✗ only sessions can be renamed");
+    }
+    if crate::sources::zellij::session_state(row.name) != Some("live") {
+        return ghost("✗ only running sessions can be renamed (zellij can't rename exited ones)");
+    }
+    let prompt = format!("✎ rename {} → ", row.name);
+    write_pending(&Pending {
+        action: Action::Rename,
+        name: row.name.to_string(),
+        prev_prompt: fzf_prompt(),
+        prompt: prompt.clone(),
+        file: String::new(),
+    });
+    [
+        // Typing edits the name; it mustn't filter the list meanwhile.
+        "disable-search".to_string(),
+        act("change-prompt", &prompt),
+        act("change-query", row.name),
+    ]
+    .join("+")
+}
+
+fn commit_rename(exe: &str, p: &Pending) -> String {
+    let new = std::env::var("FZF_QUERY").unwrap_or_default();
+    let msg = match crate::session::rename_session(&p.name, &new) {
+        Ok(to) => format!("✓ renamed {} → {to}", p.name),
+        Err(e) => format!("✗ {e}"),
+    };
+    restore(exe, p, &msg)
+}
+
+/// The query, expanded, when it is path-like.
+fn path_query() -> Option<PathBuf> {
+    let q = std::env::var("FZF_QUERY").unwrap_or_default();
+    let q = q.trim();
+    crate::util::is_pathlike(q).then(|| crate::util::expand_path(q))
+}
+
+/// ⏎ on a path-like query: the row if it is that path, else the path
+/// itself, or — when it doesn't exist — the mkdir offer.
+fn enter_path(row: &Row) -> String {
+    let Some(p) = path_query() else {
+        return "accept-or-print-query".to_string();
+    };
+    if !p.exists() {
+        return confirm_mkdir(&p.to_string_lossy());
+    }
+    if !row.path.is_empty() && crate::util::expand_path(row.path) == p {
+        "accept".to_string()
+    } else {
+        "print-query".to_string()
+    }
+}
+
+fn confirm_mkdir(dir: &str) -> String {
+    let dir = dir.to_string();
+    let shown = crate::util::tilde_path(&dir);
+    let prompt = format!("⚠ create {shown} and a session there? y/N ");
+    write_pending(&Pending {
+        action: Action::Mkdir,
+        name: String::new(),
+        prev_prompt: fzf_prompt(),
+        prompt: prompt.clone(),
+        file: dir,
+    });
+    [
+        "change-query()".to_string(),
+        act("change-prompt", &prompt),
+        ghost("y = mkdir -p + connect · any other key = cancel"),
+        "rebind(change)".to_string(),
+    ]
+    .join("+")
+}
+
+/// Alt p: match names only (default) or names + paths. Horizontal
+/// scrolling goes off with paths, so a hit deep in a path can't scroll the
+/// name out of view.
+fn toggle_path_search() -> String {
+    let paths_on = std::env::var("FZF_NTH").is_ok_and(|n| n != "1");
+    if paths_on {
+        "change-nth(1)+toggle-hscroll+change-ghost(searching names)".to_string()
+    } else {
+        "change-nth(1..)+toggle-hscroll+change-ghost(searching names + paths)".to_string()
+    }
 }
 
 /// ^h: hide the selected entry, or unhide it (hidden rows are only listed
@@ -856,6 +976,13 @@ fn confirmed(cfg: &Config, exe: &str, p: &Pending) -> String {
             leave_confirm(p),
             act("print", &format!("{RESTORE_MARK}{}\t{}", p.name, p.file))
         ),
+        Action::Mkdir => format!(
+            "{}+{}+accept-or-print-query",
+            leave_confirm(p),
+            act("print", &format!("{MKDIR_MARK}{}", p.file))
+        ),
+        // ⏎ commits a rename (handled in "enter"); typing never confirms.
+        Action::Rename => String::new(),
         Action::DropSnapshot => {
             let msg = match std::fs::remove_file(&p.file) {
                 Ok(()) => format!("🗑 deleted snapshot {}", file_stem(&p.file)),

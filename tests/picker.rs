@@ -560,3 +560,139 @@ fn header_event_wraps_to_fzf_columns() {
     assert!(out.lines().count() >= 4, "{out}");
     assert!(out.contains("M-h") && out.contains("^h"), "{out}");
 }
+
+// ---- rename / mkdir / path search ------------------------------------------
+
+#[test]
+fn rename_prompts_inline_and_enter_applies() {
+    let env = setup();
+    let out = pick(&env, &["rename", &row("zellij", "bg", "live")], "▢  ", "");
+    let prompt = "✎ rename bg → ";
+    assert!(out.contains(&format!("change-prompt({prompt})")), "{out}");
+    assert!(out.contains("change-query(bg)"), "{out}");
+    assert!(out.contains("disable-search"), "{out}");
+    let out = pick(
+        &env,
+        &["enter", &row("zellij", "bg", "live")],
+        prompt,
+        "work",
+    );
+    assert!(out.contains("✓ renamed bg → work"), "{out}");
+    assert!(out.contains("enable-search"), "{out}");
+    assert!(out.contains("change-prompt(▢  )"), "{out}");
+    assert!(
+        env.zellij_log()
+            .iter()
+            .any(|l| l == "action rename-session work"),
+        "{:?}",
+        env.zellij_log()
+    );
+}
+
+#[test]
+fn rename_refuses_exited_sessions_and_taken_names_and_esc_cancels() {
+    let env = setup();
+    let out = pick(
+        &env,
+        &["rename", &row("zellij", "dead", "exited")],
+        "⚡  ",
+        "",
+    );
+    assert!(out.contains("only running sessions"), "{out}");
+    pick(&env, &["rename", &row("zellij", "bg", "live")], "⚡  ", "");
+    let prompt = "✎ rename bg → ";
+    let out = pick(&env, &["enter", ""], prompt, "att");
+    assert!(out.contains("already exists"), "{out}");
+    pick(&env, &["rename", &row("zellij", "bg", "live")], "⚡  ", "");
+    let out = pick(&env, &["esc"], prompt, "zzz");
+    assert!(out.contains("rename cancelled"), "{out}");
+    assert!(
+        !env.zellij_log()
+            .iter()
+            .any(|l| l.contains("rename-session"))
+    );
+}
+
+#[test]
+fn enter_on_a_new_path_offers_mkdir() {
+    let env = setup();
+    let target = env.home.join("new/proj");
+    let q = target.to_str().unwrap();
+    let out = pick(&env, &["enter", ""], "⚡  ", q);
+    assert!(out.contains("⚠ create"), "{out}");
+    assert!(out.contains("and a session there? y/N"), "{out}");
+    let prompt = out
+        .split("change-prompt(")
+        .nth(1)
+        .and_then(|r| r.split(")+").next())
+        .unwrap()
+        .to_string();
+    let out = pick(&env, &["answer"], &prompt, "y");
+    assert!(
+        out.contains(&format!("print(__noren_mkdir__\t{q})")),
+        "{out}"
+    );
+    assert!(!target.exists(), "created only after fzf exits");
+    // A plain name with no match still creates a session from the query.
+    assert_eq!(
+        pick(&env, &["enter", ""], "⚡  ", "newname"),
+        "accept-or-print-query"
+    );
+    // An existing path is connected as typed, whatever row is under the
+    // cursor (fuzzy matches of a typed path are coincidental)...
+    assert_eq!(
+        pick(
+            &env,
+            &["enter", "zoxide\tetc\t/etc\tdir\tetc"],
+            "⚡  ",
+            "/tmp"
+        ),
+        "print-query"
+    );
+    // ...unless that row IS the path.
+    assert_eq!(
+        pick(
+            &env,
+            &["enter", "zoxide\ttmp\t/tmp\tdir\ttmp"],
+            "⚡  ",
+            "/tmp"
+        ),
+        "accept"
+    );
+    // A stale match under the cursor doesn't stop the mkdir offer.
+    let out = pick(&env, &["enter", "zoxide\tetc\t/etc\tdir\tetc"], "⚡  ", q);
+    assert!(out.contains("⚠ create"), "{out}");
+}
+
+#[test]
+fn alt_p_toggles_path_search() {
+    let env = setup();
+    let rt = env.home.join("run");
+    fs::create_dir_all(&rt).unwrap();
+    let run = |nth: &str| {
+        env.run_env(
+            &["pick", "paths"],
+            &[("FZF_NTH", nth), ("XDG_RUNTIME_DIR", rt.to_str().unwrap())],
+        )
+        .0
+    };
+    assert!(run("1").starts_with("change-nth(1..)+toggle-hscroll"));
+    assert!(run("1..").starts_with("change-nth(1)+toggle-hscroll"));
+}
+
+#[test]
+fn list_marks_the_last_session() {
+    let env = setup();
+    let state = env.home.join(".local/state/noren");
+    fs::create_dir_all(&state).unwrap();
+    fs::write(state.join("previous"), "bg").unwrap();
+    let (out, _, _) = env.run(&["list", "zellij"]);
+    let bg = out.lines().find(|l| l.starts_with("zellij\tbg\t")).unwrap();
+    assert!(bg.contains("bg \x1b[2m↩\x1b[0m"), "{bg:?}");
+    assert!(
+        !out.lines()
+            .find(|l| l.starts_with("zellij\tatt\t"))
+            .unwrap()
+            .contains('↩')
+    );
+}

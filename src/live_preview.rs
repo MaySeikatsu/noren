@@ -138,6 +138,12 @@ fn tail_lines(screen: &str, rows: usize) -> Vec<&str> {
 
 /// Header + tab strip + the pane's current screen, fitted to cols × rows.
 pub fn render_live(name: &str, cols: usize, rows: usize) -> Option<String> {
+    // `zellij action` with an unknown ZELLIJ_SESSION_NAME silently targets
+    // whatever session is running (0.45.1) — make sure it's really ours and
+    // really live (the list may be seconds old).
+    if crate::sources::zellij::session_state(name) != Some("live") {
+        return None;
+    }
     let tabs: Vec<Tab> = action_json(name, &["list-tabs", "-j", "-s"])?;
     let panes: Vec<Pane> = action_json(name, &["list-panes", "-a", "-j"])?;
     let tab = pick_tab(name, &tabs)?;
