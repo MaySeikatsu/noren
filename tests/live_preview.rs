@@ -182,3 +182,48 @@ fn all_tabs_mode_shows_every_tab_side_by_side() {
         "{out}"
     );
 }
+
+#[test]
+fn show_tabs_lists_live_tabs_from_zellij_and_exited_ones_from_the_cache() {
+    let env = setup(
+        r#"echo "$@" >> "$HOME/zellij-args.log"
+case "$1" in
+  list-sessions) printf 'lv [Created 1h ago]\ndead [Created 1h ago] (EXITED - attach to resurrect)\n';;
+  action) [ "$2" = list-tabs ] && echo '[{"position":1,"name":"code"},{"position":0,"name":"notes"}]';;
+esac
+exit 0"#,
+    );
+    let info = env
+        .home
+        .join(".cache/zellij/contract_version_1/session_info/dead");
+    fs::create_dir_all(&info).unwrap();
+    fs::write(
+        info.join("session-layout.kdl"),
+        "layout {\n    cwd \"/tmp\"\n    tab name=\"old\" {\n    }\n    tab {\n    }\n}\n",
+    )
+    .unwrap();
+    fs::create_dir_all(env.home.join(".config/noren")).unwrap();
+    fs::write(
+        env.home.join(".config/noren/config.toml"),
+        "show_tabs = \"column\"\nattached_indicator = false\n",
+    )
+    .unwrap();
+    let (out, _, ok) = env.run(&["list", "zellij"]);
+    assert!(ok);
+    let lv = out.lines().find(|l| l.starts_with("zellij\tlv\t")).unwrap();
+    assert!(
+        lv.contains("(notes, code)"),
+        "tab order by position: {lv:?}"
+    );
+    let dead = out
+        .lines()
+        .find(|l| l.starts_with("zellij\tdead\t"))
+        .unwrap();
+    assert!(dead.contains("(old, Tab #2)"), "{dead:?}");
+    // The exited session was never asked.
+    let asked: Vec<String> = calls(&env)
+        .into_iter()
+        .filter(|c| c.starts_with("action"))
+        .collect();
+    assert_eq!(asked, ["action list-tabs -j"], "{asked:?}");
+}

@@ -29,6 +29,7 @@ noren merges your **running zellij sessions**, **[zoxide](https://github.com/aje
 - **Session-aware everywhere** — inside zellij it switches your client in place (via the [zellij-switch](https://github.com/mostafaqanbaryan/zellij-switch) plugin — never nested attaches); outside it exec's `zellij attach --create`.
 - **Live previews** — a running session's preview shows what its focused pane displays *right now*, refreshed while you look. Optionally all tabs side by side (`live_all_tabs`). The preview's label always says what it shows — `● live`, or `▦ layout — session not running` when a live view isn't possible.
 - **Layout previews without resurrection** — the pane layout drawn as box art (focused pane highlighted, running programs labeled), rendered *only* from zellij's serialized layout cache. Exited sessions are never contacted, so hovering one can never wake it.
+- **Tabs at a glance** (opt-in, `show_tabs`) — each session's tab names in their own column or right behind the name.
 - **Attached indicator** — ▣ marks sessions currently shown in a terminal, ▢ ones running in the background.
 - **Pinning** — pin sessions (shared, name-based) and folders (separate, path-based); pinned rows float to the prompt.
 - **Tab menu** — `Alt t` lists a session's tabs (live preview per tab, the active one marked ●); `Enter` takes you straight into that tab, from inside zellij or a fresh terminal.

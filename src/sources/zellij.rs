@@ -211,29 +211,60 @@ pub fn attached_clients(name: &str) -> usize {
     lines.filter(|l| !l.trim().is_empty()).count()
 }
 
+/// Tab names of a session: live ones ask zellij (current names, timeout);
+/// exited ones read the resurrection cache — never contacted.
+fn tab_names(name: &str, live: bool) -> Vec<String> {
+    if live
+        && let Some(out) = action_output_with_timeout(name, &["list-tabs", "-j"], 400)
+        && let Ok(serde_json::Value::Array(tabs)) = serde_json::from_str(&out)
+    {
+        let mut tabs: Vec<(u64, String)> = tabs
+            .iter()
+            .filter_map(|t| Some((t["position"].as_u64()?, t["name"].as_str()?.to_string())))
+            .collect();
+        tabs.sort();
+        return tabs.into_iter().map(|(_, n)| n).collect();
+    }
+    std::fs::read_to_string(cached_layout_file(name))
+        .map(|src| crate::layout_preview::tab_names(&src))
+        .unwrap_or_default()
+}
+
 pub fn zellij_sessions(cfg: &Config) -> Vec<Row> {
     let sessions = raw_sessions();
     let pins = read_pins();
 
-    // One list-clients round trip costs ~100ms — query all live sessions in
+    // One zellij round trip costs ~100ms — query all live sessions in
     // parallel so the picker startup pays for one, not one per session.
-    let attached: Vec<bool> = std::thread::scope(|s| {
+    let want_tabs = cfg.show_tabs == "column" || cfg.show_tabs == "inline";
+    let extras: Vec<(bool, Vec<String>)> = std::thread::scope(|s| {
         sessions
             .iter()
             .map(|(name, state)| {
-                (cfg.attached_indicator && *state == "live")
-                    .then(|| s.spawn(move || attached_clients(name) > 0))
+                let live = *state == "live";
+                let attached = cfg.attached_indicator && live;
+                (attached || want_tabs).then(|| {
+                    s.spawn(move || {
+                        let a = attached && attached_clients(name) > 0;
+                        let t = if want_tabs {
+                            tab_names(name, live)
+                        } else {
+                            vec![]
+                        };
+                        (a, t)
+                    })
+                })
             })
             .collect::<Vec<_>>()
             .into_iter()
-            .map(|h| h.is_some_and(|h| h.join().unwrap_or(false)))
+            .map(|h| h.map_or((false, vec![]), |h| h.join().unwrap_or((false, vec![]))))
             .collect()
     });
 
     sessions
         .into_iter()
-        .zip(attached)
-        .map(|((name, state), attached)| {
+        .zip(extras)
+        .map(|((name, state), (attached, tabs))| {
             let pinned = pins.iter().any(|p| p == &name);
             Row {
                 source: "zellij",
@@ -242,6 +273,7 @@ pub fn zellij_sessions(cfg: &Config) -> Vec<Row> {
                 pinned,
                 icon: cfg.icon_for("zellij", state, pinned, attached),
                 hidden: false,
+                tabs,
                 name,
             }
         })

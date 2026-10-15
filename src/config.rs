@@ -27,6 +27,7 @@ pub struct Config {
     pub dir_length: usize,
     pub icons: bool,
     pub show_paths: bool,
+    pub show_tabs: String,
     pub snapshot_keep: usize,
     pub auto_snapshot_pinned: bool,
     pub attached_indicator: bool,
@@ -80,6 +81,9 @@ impl Default for Config {
             // Dimmed path after each name in the picker (disambiguates
             // random session names and same-basename folders).
             show_paths: true,
+            // Session tab names in the list: "off", "column" (own column
+            // between name and path) or "inline" (right behind the name).
+            show_tabs: "off".into(),
             // Snapshots per session (`noren snapshot`); oldest pruned beyond this.
             snapshot_keep: 5,
             // Auto-snapshot pinned sessions on pin and on connect.
@@ -367,6 +371,7 @@ const TOP_KEYS: &[&str] = &[
     "dir_length",
     "icons",
     "show_paths",
+    "show_tabs",
     "snapshot_keep",
     "auto_snapshot_pinned",
     "attached_indicator",
@@ -458,6 +463,12 @@ pub fn parse_with_warnings(raw: &str, origin: &str) -> (Config, Vec<String>) {
                 unknown_keys(t, known, &format!("{key}[{i}]."), &mut w);
             }
         }
+    }
+    if !matches!(cfg.show_tabs.as_str(), "off" | "column" | "inline") {
+        w.push(format!(
+            "show_tabs = \"{}\" is not \"off\", \"column\" or \"inline\" (using off)",
+            cfg.show_tabs
+        ));
     }
     if !matches!(cfg.preview_mode.as_str(), "live" | "visual" | "text") {
         w.push(format!(

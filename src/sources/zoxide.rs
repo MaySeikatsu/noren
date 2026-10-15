@@ -28,6 +28,7 @@ pub fn zoxide_dirs(cfg: &Config) -> Vec<Row> {
                 pinned,
                 icon: cfg.icon_for("zoxide", "dir", pinned, false),
                 hidden: false,
+                tabs: vec![],
             }
         })
         .collect()
