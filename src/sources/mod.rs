@@ -149,14 +149,19 @@ pub fn dedupe(rows: Vec<Row>, cfg: &Config) -> Vec<Row> {
         .filter(|r| r.source == "zellij")
         .map(|r| r.name.clone())
         .collect();
-    let pathless_sessions: HashSet<String> = rows
+    // A dir row is a duplicate only if picking it would land on a row that
+    // is already shown: a config entry with its path (the resolver matches
+    // [[session]] by path), or the session it would resolve to by name —
+    // when that session lives at the same path or has no cached path yet.
+    // A session that merely *started* in the dir (e.g. ~) doesn't claim it.
+    let session_paths: std::collections::HashMap<String, String> = rows
         .iter()
-        .filter(|r| r.source == "zellij" && r.path.is_empty())
-        .map(|r| r.name.clone())
+        .filter(|r| r.source == "zellij")
+        .map(|r| (r.name.clone(), path_key(&r.path)))
         .collect();
-    let claimed_paths: HashSet<String> = rows
+    let config_paths: HashSet<String> = rows
         .iter()
-        .filter(|r| r.source != "zoxide")
+        .filter(|r| r.source == "config")
         .map(|r| path_key(&r.path))
         .filter(|p| !p.is_empty())
         .collect();
@@ -171,9 +176,10 @@ pub fn dedupe(rows: Vec<Row>, cfg: &Config) -> Vec<Row> {
                     return true;
                 }
                 let would_be = sanitize(&name_from_path(&key, cfg.dir_length));
-                !claimed_paths.contains(&key)
-                    && !pathless_sessions.contains(&would_be)
-                    && seen_paths.insert(key)
+                let claimed_by_session = session_paths
+                    .get(&would_be)
+                    .is_some_and(|p| p.is_empty() || *p == key);
+                !config_paths.contains(&key) && !claimed_by_session && seen_paths.insert(key)
             }
             "zellij" => seen_names.insert(r.name.clone()),
             _ => !session_names.contains(&r.name) && seen_names.insert(r.name.clone()),
@@ -249,9 +255,11 @@ const NAME_PAD_MAX: usize = 28;
 /// Display column: "<icon><name>", plus — with show_paths — the name padded
 /// to `pad` and a dimmed `~`-abbreviated path. Never contains a tab (the
 /// display is the 5th TSV field).
-fn display(r: &Row, show_paths: bool, pad: usize) -> String {
+fn display(r: &Row, show_paths: bool, pad: usize, icon_w: usize) -> String {
     let name = r.name.replace('\t', " ");
-    let mut out = format!("{}{name}", r.icon);
+    // Icons are right-aligned so names (and paths) start in one column.
+    let indent = icon_w.saturating_sub(cell_width(&r.icon));
+    let mut out = format!("{:indent$}{}{name}", "", r.icon);
     if show_paths && !r.path.is_empty() {
         let fill = pad.saturating_sub(name.chars().count());
         let path = tilde_path(&r.path).replace('\t', " ");
@@ -260,8 +268,22 @@ fn display(r: &Row, show_paths: bool, pad: usize) -> String {
     out
 }
 
+/// Terminal cells of an icon string: emoji (📌 📁) take two, the
+/// geometric state icons one.
+fn cell_width(s: &str) -> usize {
+    s.chars()
+        .map(|c| if u32::from(c) >= 0x1F000 { 2 } else { 1 })
+        .sum()
+}
+
 /// TSV columns: source, name, path, state, display.
 pub fn rows_to_tsv(rows: &[Row], cfg: &Config) -> String {
+    let icon_w = rows
+        .iter()
+        .filter(|r| r.source != "sep")
+        .map(|r| cell_width(&r.icon))
+        .max()
+        .unwrap_or(0);
     let pad = rows
         .iter()
         .filter(|r| r.source != "sep")
@@ -280,7 +302,7 @@ pub fn rows_to_tsv(rows: &[Row], cfg: &Config) -> String {
                 r.name,
                 r.path,
                 r.state,
-                display(r, cfg.show_paths, pad)
+                display(r, cfg.show_paths, pad, icon_w)
             )
         })
         .collect::<Vec<_>>()
@@ -433,18 +455,26 @@ mod tests {
     }
 
     #[test]
-    fn dedupe_hides_dirs_claimed_by_session_or_config_path() {
+    fn dedupe_hides_dirs_only_when_picking_them_lands_on_a_shown_row() {
         let cfg = Config::default();
         let rows = vec![
+            // Started in ~/nixos but named differently: picking the dir
+            // would create/attach "nixos", so the dir stays.
             at("zellij", "cubic-bee", "/home/u/nixos"),
+            // The session the dir resolves to, at the dir's path: hidden.
+            at("zellij", "work", "/home/u/work"),
             at("config", "notes", "/home/u/notes"),
             at("zoxide", "nixos", "/home/u/nixos"),
+            at("zoxide", "work", "/home/u/work"),
             at("zoxide", "notes", "/home/u/notes"),
             at("zoxide", "other", "/home/u/other"),
         ];
         let out = dedupe(rows, &cfg);
-        assert_eq!(names(&out), vec!["cubic-bee", "notes", "other"]);
-        assert_eq!(out[1].source, "config");
+        assert_eq!(
+            names(&out),
+            vec!["cubic-bee", "work", "notes", "nixos", "other"]
+        );
+        assert_eq!(out[2].source, "config");
     }
 
     #[test]
@@ -466,9 +496,9 @@ mod tests {
         // it still yields to the session sitting on its path.
         let cfg = Config::default();
         let rows = vec![
-            at("zoxide", "nixos", "/n"),
-            at("config", "c", ""),
-            at("zellij", "c", "/n"),
+            at("zoxide", "n", "/n"),
+            at("config", "n", ""),
+            at("zellij", "n", "/n"),
         ];
         let out = dedupe(rows, &cfg);
         assert_eq!(sources_paths(&out), vec![("zellij", "/n")]);
@@ -544,7 +574,7 @@ mod tests {
         // Over the cap: just the two-space gap.
         assert_eq!(displays[3], format!("{long}  \x1b[2m/l\x1b[0m"));
         // Tabs never leak into the display field (stays the 5th column).
-        let d = display(&at("zoxide", "ta\tb", "/t\tb"), true, 0);
+        let d = display(&at("zoxide", "ta\tb", "/t\tb"), true, 0, 0);
         assert_eq!(d, "ta b  \x1b[2m/t b\x1b[0m");
     }
 }

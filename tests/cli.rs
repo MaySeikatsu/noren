@@ -38,7 +38,8 @@ echo "old [Created 2days ago] (EXITED - attach to resurrect)""#,
     // First row sits next to the prompt: pinned, then live, then exited.
     let lines: Vec<&str> = out.trim_end().split('\n').collect();
     assert_eq!(lines[0], "zellij\twork\t\tlive\t📌 ▢ work");
-    assert_eq!(lines[1], "zellij\told\t\texited\t⊗ old");
+    // Icons right-align so names share a column with the pinned row.
+    assert_eq!(lines[1], "zellij\told\t\texited\t   ⊗ old");
 }
 
 #[test]
