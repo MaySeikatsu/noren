@@ -252,9 +252,10 @@ pub fn collect(cfg: &Config, sel: Selection) -> Vec<Row> {
 /// two-space gap.
 const NAME_PAD_MAX: usize = 28;
 
-/// Display column: "<icon><name>", plus — with show_paths — the name padded
-/// to `pad` and a dimmed `~`-abbreviated path. Never contains a tab (the
-/// display is the 5th TSV field).
+/// Display: "<icon><name>" (TSV field 5), plus — with show_paths — the
+/// name padded to `pad` and the dimmed `~`-abbreviated path as field 6.
+/// The picker shows fields 5,6 (tabstop 1) but matches field 5 only, so
+/// typing never scrolls a row sideways to a hit buried in its path.
 fn display(r: &Row, show_paths: bool, pad: usize, icon_w: usize) -> String {
     let name = r.name.replace('\t', " ");
     // Icons are right-aligned so names (and paths) start in one column.
@@ -263,7 +264,7 @@ fn display(r: &Row, show_paths: bool, pad: usize, icon_w: usize) -> String {
     if show_paths && !r.path.is_empty() {
         let fill = pad.saturating_sub(name.chars().count());
         let path = tilde_path(&r.path).replace('\t', " ");
-        out.push_str(&format!("{:fill$}  \x1b[2m{path}\x1b[0m", ""));
+        out.push_str(&format!("{:fill$} \t\x1b[2m{path}\x1b[0m", ""));
     }
     out
 }
@@ -549,7 +550,7 @@ mod tests {
         );
         assert_eq!(
             rows_to_tsv(&[r], &Config::default()),
-            "zellij\tfoo\t/tmp/foo\tlive\t▢ foo  \x1b[2m/tmp/foo\x1b[0m"
+            "zellij\tfoo\t/tmp/foo\tlive\t▢ foo \t\x1b[2m/tmp/foo\x1b[0m"
         );
     }
 
@@ -565,16 +566,20 @@ mod tests {
             at("zoxide", &long, "/l"),
         ];
         let tsv = rows_to_tsv(&rows, &cfg);
-        let displays: Vec<&str> = tsv.lines().map(|l| l.split('\t').nth(4).unwrap()).collect();
+        let fields: Vec<String> = tsv
+            .lines()
+            .map(|l| l.splitn(5, '\t').nth(4).unwrap().to_string())
+            .collect();
+        let displays: Vec<&str> = fields.iter().map(String::as_str).collect();
         let pad = " ".repeat(26); // 28 (cap) - 2
-        assert_eq!(displays[0], format!("ab{pad}  \x1b[2m~/proj\x1b[0m"));
+        assert_eq!(displays[0], format!("ab{pad} \t\x1b[2m~/proj\x1b[0m"));
         // No path: no padding, no suffix.
         assert_eq!(displays[1], "abcd");
         assert_eq!(displays[2], SEPARATOR_DISPLAY);
         // Over the cap: just the two-space gap.
-        assert_eq!(displays[3], format!("{long}  \x1b[2m/l\x1b[0m"));
+        assert_eq!(displays[3], format!("{long} \t\x1b[2m/l\x1b[0m"));
         // Tabs never leak into the display field (stays the 5th column).
         let d = display(&at("zoxide", "ta\tb", "/t\tb"), true, 0, 0);
-        assert_eq!(d, "ta b  \x1b[2m/t b\x1b[0m");
+        assert_eq!(d, "ta b \t\x1b[2m/t b\x1b[0m");
     }
 }

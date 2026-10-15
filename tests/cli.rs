@@ -16,8 +16,8 @@ fn list_zoxide_uses_stubbed_binary() {
     assert!(ok);
     assert_eq!(
         out,
-        "zoxide\talpha\t/tmp/alpha\tdir\t📁 alpha  \x1b[2m/tmp/alpha\x1b[0m\n\
-         zoxide\tbeta\t/tmp/beta\tdir\t📁 beta   \x1b[2m/tmp/beta\x1b[0m\n"
+        "zoxide\talpha\t/tmp/alpha\tdir\t📁 alpha \t\x1b[2m/tmp/alpha\x1b[0m\n\
+         zoxide\tbeta\t/tmp/beta\tdir\t📁 beta  \t\x1b[2m/tmp/beta\x1b[0m\n"
     );
 }
 
@@ -165,7 +165,7 @@ fn pin_row_pins_dirs_separately_and_sorts_them_first_in_dir_group() {
     assert!(lines[1].starts_with("sep\t"));
     assert_eq!(
         lines[2],
-        "zoxide\tbbb\t/tmp/bbb\tdir\t📌 📁 bbb   \x1b[2m/tmp/bbb\x1b[0m"
+        "zoxide\tbbb\t/tmp/bbb\tdir\t📌 📁 bbb  \t\x1b[2m/tmp/bbb\x1b[0m"
     );
     assert!(lines[3].starts_with("zoxide\taaa"));
 
@@ -212,7 +212,7 @@ fn pinned_dirs_join_session_pins_when_configured() {
     // Names pad to the longest one ("pinned-sess") before the dimmed path.
     assert_eq!(
         lines[1],
-        "zoxide\tbbb\t/tmp/bbb\tdir\t📌 📁 bbb          \x1b[2m/tmp/bbb\x1b[0m"
+        "zoxide\tbbb\t/tmp/bbb\tdir\t📌 📁 bbb         \t\x1b[2m/tmp/bbb\x1b[0m"
     );
     assert!(lines[2].starts_with("zellij\tlive-sess"));
     assert!(lines[3].starts_with("sep\t"));
@@ -422,7 +422,7 @@ fn config_prefers_noren_dir_over_legacy_zjp() {
 
     let (out, _, ok) = env.run(&["list", "zoxide"]);
     assert!(ok);
-    assert_eq!(out, "zoxide\tx\t/tmp/x\tdir\tx  \x1b[2m/tmp/x\x1b[0m\n");
+    assert_eq!(out, "zoxide\tx\t/tmp/x\tdir\tx \t\x1b[2m/tmp/x\x1b[0m\n");
 }
 
 #[test]
