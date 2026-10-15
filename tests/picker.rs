@@ -804,3 +804,95 @@ fn list_marks_the_last_session() {
             .contains('↩')
     );
 }
+
+// ---- new terminal window ---------------------------------------------------
+
+fn wait_for(path: &std::path::Path) -> String {
+    for _ in 0..100 {
+        if let Ok(s) = fs::read_to_string(path)
+            && !s.is_empty()
+        {
+            return s;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    String::new()
+}
+
+#[test]
+fn alt_enter_opens_the_row_in_a_new_terminal_outside_zellij() {
+    let env = setup();
+    // A fake terminal: records its argv and whether it inherited zellij.
+    env.stub(
+        "foot",
+        r#"echo "$@ | zellij=${ZELLIJ:-none} picker=${NOREN_PICKER_ID:-none}" > "$HOME/term.log""#,
+    );
+    let rt = env.home.join("run");
+    fs::create_dir_all(&rt).unwrap();
+    let (out, _, ok) = env.run_env(
+        &["pick", "new-window", &row("zellij", "bg", "live")],
+        &[
+            ("TERMINAL", "foot"),
+            ("ZELLIJ", "1"),
+            ("ZELLIJ_SESSION_NAME", "att"),
+            ("NOREN_PICKER_ID", "5"),
+            ("XDG_RUNTIME_DIR", rt.to_str().unwrap()),
+            ("FZF_PROMPT", "⚡  "),
+        ],
+    );
+    assert!(ok);
+    assert!(out.contains("↗ opened bg in a new foot window"), "{out}");
+    let log = wait_for(&env.home.join("term.log"));
+    assert!(
+        log.contains(" connect bg | zellij=none picker=none"),
+        "{log}"
+    );
+}
+
+#[test]
+fn terminal_template_from_config_is_used() {
+    let env = setup();
+    env.stub("myterm", r#"echo "$@" > "$HOME/term.log""#);
+    write_config(&env, "terminal = \"myterm --title noren {}\"\n");
+    let out = pick(
+        &env,
+        &["new-window", "zoxide\ttmp\t/tmp\tdir\ttmp"],
+        "⚡  ",
+        "",
+    );
+    assert!(out.contains("new myterm window"), "{out}");
+    let log = wait_for(&env.home.join("term.log"));
+    assert!(log.starts_with("--title noren "), "{log}");
+    assert!(log.trim_end().ends_with("connect /tmp"), "{log}");
+}
+
+#[test]
+fn no_terminal_found_explains() {
+    let env = setup();
+    write_config(&env, "terminal = \"definitely-not-installed-term\"\n");
+    let out = pick(
+        &env,
+        &["new-window", &row("zellij", "bg", "live")],
+        "⚡  ",
+        "",
+    );
+    assert!(out.contains("no terminal found"), "{out}");
+}
+
+#[test]
+fn auto_reload_relists_the_view_but_never_disturbs_a_pending_action() {
+    let env = setup();
+    let out = pick(&env, &["auto-reload"], "▢  ", "");
+    assert!(
+        out.starts_with("reload(") && out.contains(" list zellij)"),
+        "{out}"
+    );
+    assert!(!out.contains("change-ghost"), "quiet: {out}");
+    // In the snapshot menu it re-lists the snapshots.
+    let out = pick(&env, &["auto-reload"], "📸 bg  ", "");
+    assert!(out.contains(" snapshot-rows 'bg')"), "{out}");
+    // Mid-confirmation: nothing.
+    pick(&env, &["delete", &row("zellij", "bg", "live")], "▢  ", "");
+    let prompt = "⚠ delete running session bg? y/N ";
+    assert_eq!(pick(&env, &["auto-reload"], prompt, ""), "");
+}

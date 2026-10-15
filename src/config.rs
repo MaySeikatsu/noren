@@ -17,7 +17,9 @@ pub struct Config {
     pub pinned_dirs_with_sessions: bool,
     pub preview_mode: String,
     pub live_refresh_ms: u64,
+    pub auto_reload_secs: u64,
     pub header_lines: usize,
+    pub terminal: String,
     pub preview_position: String,
     pub preview_position_compact: String,
     pub blacklist: Vec<String>,
@@ -57,6 +59,13 @@ impl Default for Config {
             // Key overview above the prompt: lines in its compact form (the
             // most used keys; F1 shows all).
             header_lines: 2,
+            // Re-list sessions/dirs this often while the picker is open, so
+            // sessions started or ended elsewhere show up (0 = off).
+            auto_reload_secs: 60,
+            // Terminal for "open in a new window": "" = $TERMINAL, else the
+            // first known emulator on PATH; a name ("foot"), or a template
+            // with {} for the command ("footclient -a noren {}").
+            terminal: String::new(),
             // Where the preview sits: next to the list in a roomy terminal,
             // above it when space is tight (the list stays at the bottom,
             // next to the prompt).
@@ -108,6 +117,7 @@ pub struct Keys {
     pub paths: String,
     pub tabs: String,
     pub help: String,
+    pub new_window: String,
 }
 
 impl Default for Keys {
@@ -131,6 +141,8 @@ impl Default for Keys {
             paths: "alt-p".into(),
             tabs: "alt-t".into(),
             help: "f1".into(),
+            // ctrl-enter is indistinguishable from enter in most terminals.
+            new_window: "alt-enter".into(),
         }
     }
 }
@@ -156,6 +168,7 @@ impl Keys {
             ("paths", self.paths.as_str()),
             ("tabs", self.tabs.as_str()),
             ("help", self.help.as_str()),
+            ("new_window", self.new_window.as_str()),
         ]
         .into_iter()
         .filter(|(_, k)| !k.trim().is_empty())
@@ -342,6 +355,8 @@ const TOP_KEYS: &[&str] = &[
     "preview_mode",
     "live_refresh_ms",
     "header_lines",
+    "auto_reload_secs",
+    "terminal",
     "preview_position",
     "preview_position_compact",
     "blacklist",
@@ -358,8 +373,24 @@ const TOP_KEYS: &[&str] = &[
     "wildcard",
 ];
 const KEYS_KEYS: &[&str] = &[
-    "sessions", "dirs", "config", "all", "reload", "pin", "snapshot", "kill", "delete", "preview",
-    "live", "hide", "hidden", "rename", "paths", "tabs", "help",
+    "sessions",
+    "dirs",
+    "config",
+    "all",
+    "reload",
+    "pin",
+    "snapshot",
+    "kill",
+    "delete",
+    "preview",
+    "live",
+    "hide",
+    "hidden",
+    "rename",
+    "paths",
+    "tabs",
+    "help",
+    "new_window",
 ];
 const CONFIRM_KEYS: &[&str] = &["kill", "delete"];
 const DEFAULT_SESSION_KEYS: &[&str] = &["startup_command", "preview_command", "layout"];

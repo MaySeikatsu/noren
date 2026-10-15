@@ -12,7 +12,7 @@
 
 rustPlatform.buildRustPackage {
   pname = "noren";
-  version = "0.2.2";
+  version = "0.2.3";
 
   src = lib.cleanSource ./.;
   cargoLock.lockFile = ./Cargo.lock;

@@ -60,10 +60,11 @@ fn view_source(prompt: &str) -> &'static str {
         .unwrap_or("all")
 }
 
-/// "ctrl-t" -> "^t", "alt-x" -> "M-x", "ctrl-alt-d" -> "^M-d".
+/// "ctrl-t" -> "^t", "alt-x" -> "M-x", "ctrl-alt-d" -> "^M-d",
+/// "alt-enter" -> "M-⏎".
 fn pretty_key(key: &str) -> String {
     let mut k = key.trim().to_string();
-    for (from, to) in [("ctrl-", "^"), ("alt-", "M-")] {
+    for (from, to) in [("ctrl-", "^"), ("alt-", "M-"), ("enter", "⏎")] {
         k = k.replace(from, to);
     }
     k
@@ -93,6 +94,7 @@ const COMPACT_ACTIONS: &[Entry] = &[
 ];
 /// Everything else, in the full overview (F1).
 const FULL_MORE: &[Entry] = &[
+    ("new_window", "new window", 0),
     ("snapshot", "snapshots", 0),
     ("tabs", "tabs", 0),
     ("hide", "hide", 0),
@@ -334,6 +336,7 @@ fn fzf_binds(cfg: &Config, exe: &str) -> Vec<String> {
             "tabs" => format!("transform({exe} pick tabs {{}})"),
             "paths" => format!("transform({exe} pick paths)"),
             "help" => format!("transform({exe} pick help)"),
+            "new_window" => format!("transform({exe} pick new-window {{}})"),
             "hidden" => format!("transform({exe} pick show-hidden)"),
             view => {
                 let (_, prompt, src) = VIEWS
@@ -374,6 +377,11 @@ pub fn picker() -> anyhow::Result<()> {
     cmd.args([
         "--ansi",
         "--tiebreak=index",
+        // Keep the cursor on the same entry across reloads (auto-reload,
+        // pin, kill, …): identity = source, name, path.
+        "--track",
+        "--id-nth",
+        "1..3",
         "--delimiter",
         "\t",
         // Name (5) and dimmed path (6) are shown; only the name is matched.
@@ -428,11 +436,14 @@ pub fn picker() -> anyhow::Result<()> {
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let refresher = sock
         .clone()
-        .filter(|_| cfg.live_refresh_ms > 0)
+        .filter(|_| cfg.live_refresh_ms > 0 || cfg.auto_reload_secs > 0)
         .map(|sock| {
             let stop = stop.clone();
-            let every = std::time::Duration::from_millis(cfg.live_refresh_ms.max(200));
-            std::thread::spawn(move || refresh_live_preview(&sock, every, &stop))
+            let ms = std::time::Duration::from_millis;
+            let live = (cfg.live_refresh_ms > 0).then(|| ms(cfg.live_refresh_ms.max(200)));
+            let list = (cfg.auto_reload_secs > 0).then(|| ms(cfg.auto_reload_secs.max(5) * 1000));
+            let exe = exe.clone();
+            std::thread::spawn(move || refresh_loop(&sock, &exe, live, list, &stop))
         });
     let out = child.wait_with_output()?;
     stop.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -559,26 +570,44 @@ fn current_row_is_live(state: &str) -> bool {
         .is_some_and(|t| t.split('\t').nth(3) == Some("live"))
 }
 
-/// While the picker runs: every `every`, re-render the preview if the
-/// cursor sits on a live session (other previews don't change on their
-/// own, and re-running e.g. eza would only flicker).
-fn refresh_live_preview(
+/// While the picker runs:
+/// - every `live`: re-render the preview if the cursor sits on a live
+///   session (other previews don't change on their own, and re-running
+///   e.g. eza would only flicker);
+/// - every `list`: re-list the current view, so sessions started or ended
+///   elsewhere don't show stale states (`pick auto-reload`, which skips
+///   while a confirmation or rename is pending).
+fn refresh_loop(
     sock: &std::path::Path,
-    every: std::time::Duration,
+    exe: &str,
+    live: Option<std::time::Duration>,
+    list: Option<std::time::Duration>,
     stop: &std::sync::atomic::AtomicBool,
 ) {
     use std::sync::atomic::Ordering;
     let tick = std::time::Duration::from_millis(50);
-    let mut waited = std::time::Duration::ZERO;
+    let (mut live_wait, mut list_wait) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
     while !stop.load(Ordering::Relaxed) {
         std::thread::sleep(tick);
-        waited += tick;
-        if waited < every {
-            continue;
+        live_wait += tick;
+        list_wait += tick;
+        if let Some(every) = list
+            && list_wait >= every
+        {
+            list_wait = std::time::Duration::ZERO;
+            let _ = fzf_http(
+                sock,
+                "POST",
+                &act("transform", &format!("{exe} pick auto-reload")),
+            );
         }
-        waited = std::time::Duration::ZERO;
-        if fzf_http(sock, "GET", "").is_some_and(|st| current_row_is_live(&st)) {
-            let _ = fzf_http(sock, "POST", "refresh-preview");
+        if let Some(every) = live
+            && live_wait >= every
+        {
+            live_wait = std::time::Duration::ZERO;
+            if fzf_http(sock, "GET", "").is_some_and(|st| current_row_is_live(&st)) {
+                let _ = fzf_http(sock, "POST", "refresh-preview");
+            }
         }
     }
 }
@@ -887,6 +916,12 @@ pub fn pick(event: &str, line: &str) {
                 }
             }
         },
+        // Timer-driven (auto_reload_secs): quietly re-list the view; never
+        // disturb a pending confirmation or an in-progress rename.
+        "auto-reload" => match active_pending() {
+            Some(_) => String::new(),
+            None => reload(&exe, &fzf_prompt()),
+        },
         "reload" => match active_pending() {
             Some(p) => restore(&exe, &p, HINT),
             None => format!("{}+{}", reload(&exe, &fzf_prompt()), ghost(HINT)),
@@ -913,6 +948,7 @@ pub fn pick(event: &str, line: &str) {
         }
         "hide" => hide(&cfg, &exe, line),
         "rename" => start_rename(&row),
+        "new-window" => new_window(&cfg, line),
         "paths" => toggle_path_search(),
         "show-hidden" => toggle_show_hidden(&exe),
         "pin" => pin(&cfg, &exe, &row),
@@ -981,6 +1017,27 @@ fn confirm_or_run(cfg: &Config, exe: &str, kind: Kind, row: &Row) -> String {
         "rebind(change)".to_string(),
     ]
     .join("+")
+}
+
+/// Alt ⏎: open the selected row in a new terminal window; the picker
+/// stays open.
+fn new_window(cfg: &Config, line: &str) -> String {
+    if active_pending().is_some() {
+        return String::new();
+    }
+    let Some(target) = target_for(line).filter(|_| line.contains('\t')) else {
+        return ghost("✗ select a session, folder or config entry");
+    };
+    if snap_view(&fzf_prompt()).is_some() {
+        return ghost("✗ not in the snapshot menu — esc back first");
+    }
+    match crate::terminal::open(cfg, &self_exe(), &target) {
+        Ok(term) => ghost(&format!(
+            "↗ opened {} in a new {term} window",
+            parse_row(line).name
+        )),
+        Err(e) => ghost(&format!("✗ {e}")),
+    }
 }
 
 /// ^e: rename the selected running session — the prompt turns into an

@@ -33,9 +33,24 @@ pinned_dirs_with_sessions = false
 #              never contacted, so hovering can't resurrect them.
 #   "visual" — the pane layout drawn as boxes labeled with running programs
 #   "text"   — the compact tree
-# Both layout styles read only the saved layout file. In the picker, ^l
-# toggles live/layout (see [keys]).
+# Both layout styles read only the saved layout file. In the picker, ctrl-/
+# cycles live → layout → text → off; the preview's label always says what it
+# shows (e.g. "▦ layout — session not running" when live isn't possible).
 preview_mode = "live"
+
+# Key overview above the prompt: how many lines its compact form may use
+# (the most used keys; F1 shows all of them).
+header_lines = 2
+
+# Terminal for "open in a new window" (alt-enter). Empty = $TERMINAL, else
+# the first of foot, kitty, ghostty, alacritty, wezterm, konsole,
+# gnome-terminal, xterm on PATH. A name ("ghostty") or a template with {}
+# for the command ("footclient --app-id noren {}").
+terminal = ""
+
+# Re-list sessions and folders this often (seconds) while the picker is
+# open, so sessions started or ended elsewhere show up. 0 = off.
+auto_reload_secs = 60
 
 # How often a live preview re-renders while the cursor rests on it (ms).
 # 0 = only when the cursor moves.
@@ -103,8 +118,10 @@ snapshot = "ctrl-s"   # snapshot menu of the selected session: take one,
                       # restore (⏎), delete (ctrl-d); esc goes back
 kill     = "ctrl-k"   # soft kill (layout survives, session resurrectable)
 delete   = "ctrl-d"   # hard delete (removes the resurrection data)
-preview  = "ctrl-/"   # show/hide the preview
-live     = "ctrl-l"   # session previews: live screen <-> saved layout
+preview  = "ctrl-/"   # cycle the preview: live → layout → text → off
+help     = "f1"       # full key overview ↔ the compact one
+new_window = "alt-enter"  # open the selected entry in a new terminal window
+                      # (ctrl-enter sends the same as enter in most terminals)
 hide     = "ctrl-h"   # hide / unhide the selected entry (kept in
                       # ~/.local/state/noren/hidden; `noren list hidden`)
 hidden   = "alt-h"    # show hidden entries (⊘) in the list, or not
