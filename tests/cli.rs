@@ -16,7 +16,8 @@ fn list_zoxide_uses_stubbed_binary() {
     assert!(ok);
     assert_eq!(
         out,
-        "zoxide\talpha\t/tmp/alpha\tdir\t📁 alpha\nzoxide\tbeta\t/tmp/beta\tdir\t📁 beta\n"
+        "zoxide\talpha\t/tmp/alpha\tdir\t📁 alpha  \x1b[2m/tmp/alpha\x1b[0m\n\
+         zoxide\tbeta\t/tmp/beta\tdir\t📁 beta   \x1b[2m/tmp/beta\x1b[0m\n"
     );
 }
 
@@ -73,23 +74,46 @@ fn list_all_merges_sorts_dedupes_and_blacklists() {
         "zellij",
         "echo \"alpha [Created 1h ago]\"\necho \"junk [Created 1h ago]\"",
     );
-    env.stub("zoxide", "echo /tmp/alpha");
+    env.stub(
+        "zoxide",
+        "printf '%s\\n' /tmp/alpha /a/scratch /b/scratch /a/scratch/ /p/proj1 /p/keep",
+    );
     fs::create_dir_all(env.home.join(".config/zjp")).unwrap();
     fs::write(
         env.home.join(".config/zjp/config.toml"),
-        "blacklist = [\"junk\"]\n",
+        "blacklist = [\"junk\", \"scratch\", \"/p/proj*\"]\n",
     )
     .unwrap();
 
+    // (source, name, path) — display is covered by the display tests.
+    let rows = |out: &str| -> Vec<String> {
+        out.lines()
+            .map(|l| l.split('\t').take(3).collect::<Vec<_>>().join("|"))
+            .collect()
+    };
+
     let (out, _, ok) = env.run(&["list", "all"]);
     assert!(ok);
-    // Sessions come first now, so dedupe keeps the zellij "alpha" (the live
-    // row beats the dir row); blacklist hides "junk". Only one area is left,
-    // so no separator line appears.
-    assert_eq!(out, "zellij\talpha\t\tlive\t▢ alpha\n");
+    // "alpha" has no cached path yet, so the dir it was created from is
+    // hidden. Same-basename dirs both stay (dirs dedupe by path only); the
+    // bare "scratch" entry blacklists sessions by name, never dirs by
+    // basename; "/p/proj*" hides dirs by path glob.
+    assert_eq!(
+        rows(&out),
+        vec![
+            "zellij|alpha|",
+            "sep||",
+            "zoxide|scratch|/a/scratch",
+            "zoxide|scratch|/b/scratch",
+            "zoxide|keep|/p/keep",
+        ]
+    );
 
     let (out, _, _) = env.run(&["list", "blacklist"]);
-    assert_eq!(out, "zellij\tjunk\t\tlive\t▢ junk\n");
+    assert_eq!(
+        rows(&out),
+        vec!["zellij|junk|", "sep||", "zoxide|proj1|/p/proj1"]
+    );
 }
 
 #[test]
@@ -138,7 +162,10 @@ fn pin_row_pins_dirs_separately_and_sorts_them_first_in_dir_group() {
     let lines: Vec<&str> = out.trim_end().split('\n').collect();
     assert!(lines[0].starts_with("zellij\twork"));
     assert!(lines[1].starts_with("sep\t"));
-    assert_eq!(lines[2], "zoxide\tbbb\t/tmp/bbb\tdir\t📌 📁 bbb");
+    assert_eq!(
+        lines[2],
+        "zoxide\tbbb\t/tmp/bbb\tdir\t📌 📁 bbb   \x1b[2m/tmp/bbb\x1b[0m"
+    );
     assert!(lines[3].starts_with("zoxide\taaa"));
 
     // pin-row on a session row toggles the shared file, same as `noren pin`.
@@ -181,7 +208,11 @@ fn pinned_dirs_join_session_pins_when_configured() {
     // Pinned dir slots in right after the pinned session, before live ones;
     // the separator moves above the whole session area.
     assert!(lines[0].starts_with("zellij\tpinned-sess"));
-    assert_eq!(lines[1], "zoxide\tbbb\t/tmp/bbb\tdir\t📌 📁 bbb");
+    // Names pad to the longest one ("pinned-sess") before the dimmed path.
+    assert_eq!(
+        lines[1],
+        "zoxide\tbbb\t/tmp/bbb\tdir\t📌 📁 bbb          \x1b[2m/tmp/bbb\x1b[0m"
+    );
     assert!(lines[2].starts_with("zellij\tlive-sess"));
     assert!(lines[3].starts_with("sep\t"));
     assert!(lines[4].starts_with("zoxide\taaa"));
@@ -378,7 +409,7 @@ fn config_prefers_noren_dir_over_legacy_zjp() {
     fs::create_dir_all(env.home.join(".config/zjp")).unwrap();
     fs::write(
         env.home.join(".config/zjp/config.toml"),
-        "blacklist = [\"x\"]\n",
+        "blacklist = [\"/tmp/x\"]\n",
     )
     .unwrap();
     fs::create_dir_all(env.home.join(".config/noren")).unwrap();
@@ -390,7 +421,7 @@ fn config_prefers_noren_dir_over_legacy_zjp() {
 
     let (out, _, ok) = env.run(&["list", "zoxide"]);
     assert!(ok);
-    assert_eq!(out, "zoxide\tx\t/tmp/x\tdir\tx\n");
+    assert_eq!(out, "zoxide\tx\t/tmp/x\tdir\tx  \x1b[2m/tmp/x\x1b[0m\n");
 }
 
 #[test]

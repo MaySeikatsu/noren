@@ -57,16 +57,61 @@ fn previous_file() -> PathBuf {
 }
 
 /// Rotate: the previous "current" becomes "previous", `name` becomes "last".
+/// Inside zellij the session we are leaving is `$ZELLIJ_SESSION_NAME`, not
+/// the `last` file — the user may have switched with another tool (zellij's
+/// own session manager, a keybind) since noren last ran.
 pub fn record_last(name: &str) {
     let dir = state_dir();
     let _ = fs::create_dir_all(&dir);
-    let curr = fs::read_to_string(last_file())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
+    let inside = std::env::var("ZELLIJ").is_ok_and(|z| !z.is_empty());
+    let here = std::env::var("ZELLIJ_SESSION_NAME").unwrap_or_default();
+    let curr = if inside && !here.is_empty() && here != name {
+        here
+    } else {
+        fs::read_to_string(last_file())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default()
+    };
     if !curr.is_empty() && curr != name {
         let _ = fs::write(previous_file(), &curr);
     }
     let _ = fs::write(last_file(), name);
+}
+
+/// Rename carries history: replace `old` with `new` in `last`/`previous`
+/// (exact matches only), so `noren last` follows the renamed session.
+pub fn rename_in_history(old: &str, new: &str) {
+    for f in [last_file(), previous_file()] {
+        if fs::read_to_string(&f).is_ok_and(|s| s.trim() == old) {
+            let _ = fs::write(&f, new);
+        }
+    }
+}
+
+pub fn snapshots_dir() -> PathBuf {
+    state_dir().join("snapshots")
+}
+
+/// Rename carries snapshots: move snapshots/<old>/ to snapshots/<new>/.
+/// When <new>/ already exists, files are moved in without overwriting —
+/// name clashes stay behind in <old>/, which is removed only once empty.
+pub fn rename_snapshots(old: &str, new: &str) {
+    let (from, to) = (snapshots_dir().join(old), snapshots_dir().join(new));
+    if !from.is_dir() {
+        return;
+    }
+    if !to.exists() {
+        let _ = fs::rename(&from, &to);
+        return;
+    }
+    let Ok(rd) = fs::read_dir(&from) else { return };
+    for entry in rd.flatten() {
+        let dst = to.join(entry.file_name());
+        if !dst.exists() {
+            let _ = fs::rename(entry.path(), dst);
+        }
+    }
+    let _ = fs::remove_dir(&from); // fails (keeps it) unless empty
 }
 
 /// The session to jump back to with `noren last`.

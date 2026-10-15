@@ -40,11 +40,6 @@ fn self_exe() -> String {
         .unwrap_or_else(|| "noren".to_string())
 }
 
-/// POSIX single-quoting for names/paths spliced into bind commands.
-fn sh_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
-}
-
 /// `noren list` source for a prompt; unknown prompts show everything.
 fn view_source(prompt: &str) -> &'static str {
     VIEWS
@@ -151,7 +146,7 @@ fn fzf_binds(cfg: &Config, exe: &str) -> Vec<String> {
 pub fn picker() -> anyhow::Result<()> {
     let (cfg, warnings) = Config::load_with_warnings();
     let rows = collect(&cfg, Selection::all());
-    let tsv = rows_to_tsv(&rows);
+    let tsv = rows_to_tsv(&rows, &cfg);
     if tsv.is_empty() {
         for w in &warnings {
             eprintln!("noren: {w}");
@@ -160,7 +155,7 @@ pub fn picker() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let exe = sh_quote(&self_exe());
+    let exe = crate::util::shell_quote(&self_exe());
     let id = std::process::id().to_string();
     let mut cmd = Command::new("fzf");
     cmd.args([
@@ -376,7 +371,11 @@ fn run_kind(exe: &str, kind: Kind, name: &str, state: SessionState, view_prompt:
         // with the session, so there is nothing to reload.
         return act(
             "execute-silent",
-            &format!("{exe} {} --yes {}", kind.verb(), sh_quote(name)),
+            &format!(
+                "{exe} {} --yes {}",
+                kind.verb(),
+                crate::util::shell_quote(name)
+            ),
         );
     }
     let msg = match actions::perform(kind, name, state) {
@@ -393,7 +392,7 @@ fn ghost(msg: &str) -> String {
 /// `noren pick <event> [row]` — prints fzf actions.
 pub fn pick(event: &str, line: &str) {
     let cfg = Config::load();
-    let exe = sh_quote(&self_exe());
+    let exe = crate::util::shell_quote(&self_exe());
     let row = parse_row(line);
     let out = match event {
         "enter" => match active_pending() {

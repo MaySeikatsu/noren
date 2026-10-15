@@ -5,7 +5,8 @@ pub mod config_src;
 pub mod zellij;
 pub mod zoxide;
 
-use crate::config::Config;
+use crate::config::{Config, wildcard_match};
+use crate::util::{expand_path, name_from_path, sanitize, tilde_path};
 
 #[derive(Debug, Clone)]
 pub struct Row {
@@ -124,13 +125,72 @@ pub fn sort_rows(rows: &mut [Row], cfg: &Config) {
     });
 }
 
-/// Dedupe by name, keeping the first occurrence (first-write-wins in
-/// sort_order order — callers sort before deduping).
-pub fn dedupe(rows: Vec<Row>) -> Vec<Row> {
-    let mut seen = std::collections::HashSet::new();
+/// Normalized identity of a row's path ("" stays "" — never an identity).
+fn path_key(p: &str) -> String {
+    if p.is_empty() {
+        String::new()
+    } else {
+        expand_path(p).to_string_lossy().into_owned()
+    }
+}
+
+/// Dedupe by identity, keeping the first occurrence within each kind
+/// (callers sort before deduping):
+///   sessions/config — by name; a session hides a config row of that name.
+///   dirs — by path; hidden when a session or config row has the same path,
+///   or when a session without a cached path yet (just created) has the
+///   name the dir would resolve to.
+/// Cross-kind hiding does not depend on position, so a pinned dir sorted
+/// ahead of the sessions still yields to them: sessions beat config beat dirs.
+pub fn dedupe(rows: Vec<Row>, cfg: &Config) -> Vec<Row> {
+    use std::collections::HashSet;
+    let session_names: HashSet<String> = rows
+        .iter()
+        .filter(|r| r.source == "zellij")
+        .map(|r| r.name.clone())
+        .collect();
+    let pathless_sessions: HashSet<String> = rows
+        .iter()
+        .filter(|r| r.source == "zellij" && r.path.is_empty())
+        .map(|r| r.name.clone())
+        .collect();
+    let claimed_paths: HashSet<String> = rows
+        .iter()
+        .filter(|r| r.source != "zoxide")
+        .map(|r| path_key(&r.path))
+        .filter(|p| !p.is_empty())
+        .collect();
+
+    let mut seen_names = HashSet::new();
+    let mut seen_paths = HashSet::new();
     rows.into_iter()
-        .filter(|r| seen.insert(r.name.clone()))
+        .filter(|r| match r.source {
+            "zoxide" => {
+                let key = path_key(&r.path);
+                if key.is_empty() {
+                    return true;
+                }
+                let would_be = sanitize(&name_from_path(&key, cfg.dir_length));
+                !claimed_paths.contains(&key)
+                    && !pathless_sessions.contains(&would_be)
+                    && seen_paths.insert(key)
+            }
+            "zellij" => seen_names.insert(r.name.clone()),
+            _ => !session_names.contains(&r.name) && seen_names.insert(r.name.clone()),
+        })
         .collect()
+}
+
+/// Blacklist match. Sessions and config rows match by name; dirs only by
+/// path — an entry equal to the path (`~` expanded) or matching it as a
+/// glob (`*`/`**`/`?`, same as [[wildcard]]), never by basename.
+fn is_blacklisted(r: &Row, patterns: &[String], names: &[String]) -> bool {
+    if r.source == "zoxide" {
+        let p = path_key(&r.path);
+        !p.is_empty() && patterns.iter().any(|pat| wildcard_match(pat, &p))
+    } else {
+        names.iter().any(|b| b == &r.name)
+    }
 }
 
 /// Load and merge the selected sources, sorted, deduped, blacklist-filtered,
@@ -148,12 +208,24 @@ pub fn collect(cfg: &Config, sel: Selection) -> Vec<Row> {
     }
 
     sort_rows(&mut rows, cfg);
-    let deduped = dedupe(rows);
+    let deduped = dedupe(rows, cfg);
 
+    // Path-like entries are expanded once; bare words stay as written (no
+    // cwd join) and only match dirs as globs, e.g. "**/scratch".
     let bl = &cfg.blacklist;
+    let patterns: Vec<String> = bl
+        .iter()
+        .map(|b| {
+            if b.starts_with('/') || b.starts_with('~') {
+                path_key(b)
+            } else {
+                b.clone()
+            }
+        })
+        .collect();
     let mut rows: Vec<Row> = deduped
         .into_iter()
-        .filter(|r| bl.iter().any(|b| b == &r.name) == sel.blacklisted)
+        .filter(|r| is_blacklisted(r, &patterns, bl) == sel.blacklisted)
         .collect();
 
     if cfg.separator {
@@ -170,16 +242,45 @@ pub fn collect(cfg: &Config, sel: Selection) -> Vec<Row> {
     rows
 }
 
-/// TSV columns: source, name, path, state, display ("<icon><name>").
-pub fn rows_to_tsv(rows: &[Row]) -> String {
+/// Name column width cap for the dimmed path; longer names just get the
+/// two-space gap.
+const NAME_PAD_MAX: usize = 28;
+
+/// Display column: "<icon><name>", plus — with show_paths — the name padded
+/// to `pad` and a dimmed `~`-abbreviated path. Never contains a tab (the
+/// display is the 5th TSV field).
+fn display(r: &Row, show_paths: bool, pad: usize) -> String {
+    let name = r.name.replace('\t', " ");
+    let mut out = format!("{}{name}", r.icon);
+    if show_paths && !r.path.is_empty() {
+        let fill = pad.saturating_sub(name.chars().count());
+        let path = tilde_path(&r.path).replace('\t', " ");
+        out.push_str(&format!("{:fill$}  \x1b[2m{path}\x1b[0m", ""));
+    }
+    out
+}
+
+/// TSV columns: source, name, path, state, display.
+pub fn rows_to_tsv(rows: &[Row], cfg: &Config) -> String {
+    let pad = rows
+        .iter()
+        .filter(|r| r.source != "sep")
+        .map(|r| r.name.chars().count())
+        .max()
+        .unwrap_or(0)
+        .min(NAME_PAD_MAX);
     rows.iter()
         .map(|r| {
             if r.source == "sep" {
                 return format!("sep\t\t\tsep\t{SEPARATOR_DISPLAY}");
             }
             format!(
-                "{}\t{}\t{}\t{}\t{}{}",
-                r.source, r.name, r.path, r.state, r.icon, r.name
+                "{}\t{}\t{}\t{}\t{}",
+                r.source,
+                r.name,
+                r.path,
+                r.state,
+                display(r, cfg.show_paths, pad)
             )
         })
         .collect::<Vec<_>>()
@@ -189,7 +290,7 @@ pub fn rows_to_tsv(rows: &[Row]) -> String {
 /// `noren list <word>` — print rows for the selected source(s).
 pub fn list_cmd(cfg: &Config, word: &str) {
     let rows = collect(cfg, parse_source(word));
-    println!("{}", rows_to_tsv(&rows));
+    println!("{}", rows_to_tsv(&rows, cfg));
 }
 
 #[cfg(test)]
@@ -287,16 +388,120 @@ mod tests {
         assert_eq!(names(&rows), vec!["d1", "m1"]);
     }
 
+    fn at(source: &'static str, name: &str, path: &str) -> Row {
+        Row {
+            path: path.into(),
+            ..row(source, name, false)
+        }
+    }
+
+    fn sources_paths(rows: &[Row]) -> Vec<(&str, &str)> {
+        rows.iter().map(|r| (r.source, r.path.as_str())).collect()
+    }
+
     #[test]
-    fn dedupe_first_wins() {
+    fn dedupe_keeps_same_basename_dirs_but_drops_equal_paths() {
+        let cfg = Config::default();
         let rows = vec![
-            row("zoxide", "nixos", false),
-            row("config", "nixos", false),
-            row("zellij", "other", false),
+            at("zoxide", "scratch", "/a/scratch"),
+            at("zoxide", "scratch", "/b/scratch"),
+            at("zoxide", "scratch", "/a/scratch/"),
         ];
-        let out = dedupe(rows);
-        assert_eq!(names(&out), vec!["nixos", "other"]);
-        assert_eq!(out[0].source, "zoxide");
+        let out = dedupe(rows, &cfg);
+        assert_eq!(
+            sources_paths(&out),
+            vec![("zoxide", "/a/scratch"), ("zoxide", "/b/scratch")]
+        );
+    }
+
+    #[test]
+    fn dedupe_sessions_by_name_and_session_beats_config() {
+        let cfg = Config::default();
+        let rows = vec![
+            at("zellij", "proj", "/x"),
+            at("zellij", "proj", "/y"),
+            at("config", "proj", "/z"),
+            // Same path as a session, different name: config rows stay.
+            at("config", "other", "/x"),
+            at("config", "other", "/w"),
+        ];
+        let out = dedupe(rows, &cfg);
+        assert_eq!(
+            sources_paths(&out),
+            vec![("zellij", "/x"), ("config", "/x")]
+        );
+    }
+
+    #[test]
+    fn dedupe_hides_dirs_claimed_by_session_or_config_path() {
+        let cfg = Config::default();
+        let rows = vec![
+            at("zellij", "cubic-bee", "/home/u/nixos"),
+            at("config", "notes", "/home/u/notes"),
+            at("zoxide", "nixos", "/home/u/nixos"),
+            at("zoxide", "notes", "/home/u/notes"),
+            at("zoxide", "other", "/home/u/other"),
+        ];
+        let out = dedupe(rows, &cfg);
+        assert_eq!(names(&out), vec!["cubic-bee", "notes", "other"]);
+        assert_eq!(out[1].source, "config");
+    }
+
+    #[test]
+    fn dedupe_hides_dir_of_just_created_pathless_session() {
+        let cfg = Config::default();
+        let rows = vec![
+            at("zellij", "my-proj", ""),
+            // Resolves to sanitize("my proj") == "my-proj".
+            at("zoxide", "my proj", "/p/my proj"),
+            at("zoxide", "proj", "/p/proj"),
+        ];
+        let out = dedupe(rows, &cfg);
+        assert_eq!(names(&out), vec!["my-proj", "proj"]);
+    }
+
+    #[test]
+    fn dedupe_cross_kind_is_order_independent() {
+        // pinned_dirs_with_sessions can sort a dir ahead of live sessions;
+        // it still yields to the session sitting on its path.
+        let cfg = Config::default();
+        let rows = vec![
+            at("zoxide", "nixos", "/n"),
+            at("config", "c", ""),
+            at("zellij", "c", "/n"),
+        ];
+        let out = dedupe(rows, &cfg);
+        assert_eq!(sources_paths(&out), vec![("zellij", "/n")]);
+    }
+
+    #[test]
+    fn blacklist_dirs_by_path_or_glob_never_basename() {
+        let names_bl = vec!["scratch".to_string()];
+        let dir = at("zoxide", "scratch", "/a/scratch");
+        let sess = at("zellij", "scratch", "/a/scratch");
+        assert!(!is_blacklisted(&dir, &names_bl, &names_bl));
+        assert!(is_blacklisted(&sess, &names_bl, &names_bl));
+
+        let exact = vec!["/a/scratch".to_string()];
+        assert!(is_blacklisted(&dir, &exact, &[]));
+        assert!(!is_blacklisted(
+            &at("zoxide", "scratch", "/b/scratch"),
+            &exact,
+            &[]
+        ));
+
+        let glob = vec!["**/scratch".to_string()];
+        assert!(is_blacklisted(&dir, &glob, &[]));
+        assert!(is_blacklisted(
+            &at("zoxide", "x", "/b/c/scratch"),
+            &glob,
+            &[]
+        ));
+        assert!(!is_blacklisted(
+            &at("zoxide", "x", "/b/scratch2"),
+            &glob,
+            &[]
+        ));
     }
 
     #[test]
@@ -304,6 +509,42 @@ mod tests {
         let mut r = row("zellij", "foo", false);
         r.path = "/tmp/foo".into();
         r.icon = "▢ ".into();
-        assert_eq!(rows_to_tsv(&[r]), "zellij\tfoo\t/tmp/foo\tlive\t▢ foo");
+        let plain = Config {
+            show_paths: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            rows_to_tsv(std::slice::from_ref(&r), &plain),
+            "zellij\tfoo\t/tmp/foo\tlive\t▢ foo"
+        );
+        assert_eq!(
+            rows_to_tsv(&[r], &Config::default()),
+            "zellij\tfoo\t/tmp/foo\tlive\t▢ foo  \x1b[2m/tmp/foo\x1b[0m"
+        );
+    }
+
+    #[test]
+    fn display_pads_names_and_dims_paths() {
+        let cfg = Config::default();
+        let home = crate::util::home_dir().to_string_lossy().into_owned();
+        let long = "x".repeat(30);
+        let rows = vec![
+            at("zellij", "ab", &format!("{home}/proj")),
+            at("zellij", "abcd", ""),
+            separator_row(),
+            at("zoxide", &long, "/l"),
+        ];
+        let tsv = rows_to_tsv(&rows, &cfg);
+        let displays: Vec<&str> = tsv.lines().map(|l| l.split('\t').nth(4).unwrap()).collect();
+        let pad = " ".repeat(26); // 28 (cap) - 2
+        assert_eq!(displays[0], format!("ab{pad}  \x1b[2m~/proj\x1b[0m"));
+        // No path: no padding, no suffix.
+        assert_eq!(displays[1], "abcd");
+        assert_eq!(displays[2], SEPARATOR_DISPLAY);
+        // Over the cap: just the two-space gap.
+        assert_eq!(displays[3], format!("{long}  \x1b[2m/l\x1b[0m"));
+        // Tabs never leak into the display field (stays the 5th column).
+        let d = display(&at("zoxide", "ta\tb", "/t\tb"), true, 0);
+        assert_eq!(d, "ta b  \x1b[2m/t b\x1b[0m");
     }
 }

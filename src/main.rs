@@ -152,10 +152,6 @@ fn name_for(cfg: &Config, path: &str) -> String {
     connect::resolve(cfg, path).name
 }
 
-fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
-}
-
 /// `noren resolve <target> --format=env|json` for shell consumers
 /// (zellij-autostart evals the env form).
 fn resolve_cmd(cfg: &Config, target: &str, format: &str) {
@@ -163,10 +159,10 @@ fn resolve_cmd(cfg: &Config, target: &str, format: &str) {
     match format {
         "json" => println!("{}", serde_json::to_string(&r).expect("serializable")),
         _ => {
-            println!("NAME={}", shell_quote(&r.name));
-            println!("SESSION_PATH={}", shell_quote(&r.path));
-            println!("LAYOUT={}", shell_quote(&r.layout));
-            println!("STARTUP={}", shell_quote(&r.startup_command));
+            println!("NAME={}", util::shell_quote(&r.name));
+            println!("SESSION_PATH={}", util::shell_quote(&r.path));
+            println!("LAYOUT={}", util::shell_quote(&r.layout));
+            println!("STARTUP={}", util::shell_quote(&r.startup_command));
         }
     }
 }
