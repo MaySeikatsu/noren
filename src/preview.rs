@@ -1,12 +1,14 @@
 //! fzf preview: receives the whole TSV row and dispatches on state.
 //!   live/exited -> native layout tree render
-//!   config      -> the entry's preview_command ({} = path)
+//!   config      -> the entry's preview_command ({} = shell-quoted path,
+//!                  also exported as $NOREN_PATH)
 //!   dir/other   -> wildcard preview_command, else eza tree, else ls -la
 
 use std::process::Command;
 
 use crate::config::Config;
 use crate::layout_preview;
+use crate::util::shell_quote;
 
 struct ParsedLine<'a> {
     name: &'a str,
@@ -32,11 +34,35 @@ fn run_capture(mut cmd: Command) -> Option<String> {
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
 }
 
+/// Substitute the path for `{}` as exactly one shell-quoted word. Configs
+/// may already quote the placeholder (`'{}'`, `"{}"`), so those forms are
+/// replaced whole. Single left-to-right pass: a `{}` inside the path is
+/// never substituted again.
+fn substitute_path(preview_cmd: &str, path: &str) -> String {
+    let quoted = shell_quote(path);
+    let mut out = String::with_capacity(preview_cmd.len() + quoted.len());
+    let mut rest = preview_cmd;
+    while !rest.is_empty() {
+        if let Some(r) = ["'{}'", "\"{}\"", "{}"]
+            .iter()
+            .find_map(|form| rest.strip_prefix(form))
+        {
+            out.push_str(&quoted);
+            rest = r;
+        } else {
+            let c = rest.chars().next().expect("non-empty");
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    out
+}
+
 fn render_path(path: &str, preview_cmd: &str) -> String {
     if !preview_cmd.is_empty() {
-        let cmd = preview_cmd.replace("{}", path);
+        let cmd = substitute_path(preview_cmd, path);
         let mut c = Command::new("sh");
-        c.args(["-c", &cmd]);
+        c.args(["-c", &cmd]).env("NOREN_PATH", path);
         run_capture(c).unwrap_or_else(|| format!("(preview command failed: {cmd})"))
     } else if !path.is_empty() && std::path::Path::new(path).exists() {
         let mut eza = Command::new("eza");
@@ -99,4 +125,26 @@ pub fn preview(cfg: &Config, line: &str) {
         }
     };
     println!("{out}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn placeholder_forms_all_become_one_quoted_word() {
+        let p = "/x/a b'c";
+        let q = "'/x/a b'\\''c'";
+        for cmd in ["ls {}", "ls '{}'", "ls \"{}\""] {
+            assert_eq!(substitute_path(cmd, p), format!("ls {q}"), "cmd: {cmd}");
+        }
+        assert_eq!(substitute_path("diff {} {}", "/a"), "diff '/a' '/a'");
+        assert_eq!(substitute_path("echo hi", "/a"), "echo hi");
+    }
+
+    #[test]
+    fn braces_inside_the_path_are_not_substituted_again() {
+        assert_eq!(substitute_path("ls {}", "/x/{}"), "ls '/x/{}'");
+        assert_eq!(substitute_path("ls ü{}", "/é"), "ls ü'/é'");
+    }
 }

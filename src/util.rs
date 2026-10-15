@@ -104,6 +104,11 @@ pub fn tilde_path(p: &str) -> String {
     }
 }
 
+/// POSIX single-quote a string for `sh` (`'` -> `'\''`).
+pub fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 /// Does the argument look like a path (vs a session name)?
 pub fn is_pathlike(s: &str) -> bool {
     s.starts_with('/') || s.starts_with('~') || s.starts_with("./") || s.starts_with("../")
@@ -146,6 +151,13 @@ mod tests {
         assert_eq!(tilde_path(&format!("{home}/a/b")), "~/a/b");
         assert_eq!(tilde_path(&format!("{home}x/a")), format!("{home}x/a"));
         assert_eq!(tilde_path("/elsewhere"), "/elsewhere");
+    }
+
+    #[test]
+    fn shell_quote_single_quotes() {
+        assert_eq!(shell_quote("a b"), "'a b'");
+        assert_eq!(shell_quote("it's"), "'it'\\''s'");
+        assert_eq!(shell_quote(""), "''");
     }
 
     #[test]
