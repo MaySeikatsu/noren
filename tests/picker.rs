@@ -329,3 +329,145 @@ fn deleting_the_previous_session_forgets_it_for_last() {
     assert!(!ok);
     assert!(err.contains("no previous session"), "{err}");
 }
+
+// ---- snapshot menu ---------------------------------------------------------
+
+fn snap_dir(env: &Env, name: &str) -> std::path::PathBuf {
+    let d = env.home.join(".local/state/noren/snapshots").join(name);
+    fs::create_dir_all(&d).unwrap();
+    d
+}
+
+#[test]
+fn ctrl_s_on_a_session_opens_its_snapshot_menu_and_esc_returns() {
+    let env = setup();
+    let out = pick(&env, &["snapshot", &row("zellij", "bg", "live")], "▢  ", "");
+    assert!(out.contains("change-prompt(📸 bg  )"), "{out}");
+    assert!(out.contains(" snapshot-rows 'bg')"), "{out}");
+    assert!(out.contains("⏎ restore"), "{out}");
+    // esc goes back to the view the menu was opened from.
+    let out = pick(&env, &["esc"], "📸 bg  ", "");
+    assert!(out.contains("change-prompt(▢  )"), "{out}");
+    assert!(out.contains(" list zellij)"), "{out}");
+    assert!(!out.contains("abort"), "{out}");
+}
+
+#[test]
+fn ctrl_s_on_a_folder_explains() {
+    let env = setup();
+    let out = pick(
+        &env,
+        &["snapshot", "zoxide\ttmp\t/tmp\tdir\ttmp"],
+        "⚡  ",
+        "",
+    );
+    assert!(out.starts_with("change-ghost(✗"), "{out}");
+}
+
+#[test]
+fn snapshot_rows_list_take_now_first_then_newest() {
+    let env = setup();
+    let d = snap_dir(&env, "bg");
+    fs::write(d.join("20260101-000000.kdl"), "layout {\n tab {\n }\n}\n").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    fs::write(d.join("20260102-000000.kdl"), "layout {\n}\n").unwrap();
+    let (out, _, ok) = env.run(&["snapshot-rows", "bg"]);
+    assert!(ok);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(
+        lines[0],
+        "snapnew\tbg\t\tsnapnew\t＋ take a snapshot of bg now"
+    );
+    assert!(
+        lines[1].contains("20260102-000000.kdl\tsnapshot\t📸 #1  2026-01-02"),
+        "{out}"
+    );
+    assert!(lines[2].contains("📸 #2  2026-01-01 00:00:00 UTC"), "{out}");
+    assert!(lines[2].ends_with("· 1 tab"), "{out}");
+}
+
+#[test]
+fn enter_on_take_now_saves_a_snapshot() {
+    let env = Env::new();
+    env.stub(
+        "zellij",
+        r#"case "$1" in
+  list-sessions) echo "bg [Created 1h ago]";;
+  action) [ "$2" = dump-layout ] && echo 'layout { tab { } }';;
+esac"#,
+    );
+    let out = pick(
+        &env,
+        &["enter", "snapnew\tbg\t\tsnapnew\t＋"],
+        "📸 bg  ",
+        "",
+    );
+    assert!(out.contains("📸 saved"), "{out}");
+    assert!(out.contains(" snapshot-rows 'bg')"), "{out}");
+    assert_eq!(fs::read_dir(snap_dir(&env, "bg")).unwrap().count(), 1);
+}
+
+#[test]
+fn restore_from_menu_confirms_then_hands_off_to_the_picker() {
+    let env = setup();
+    let f = snap_dir(&env, "bg").join("20260101-000000.kdl");
+    fs::write(&f, "layout {\n}\n").unwrap();
+    let line = format!("snapshot\tbg\t{}\tsnapshot\t📸 #1", f.display());
+    let out = pick(&env, &["enter", &line], "📸 bg  ", "");
+    let prompt = "⚠ restore bg to 20260101-000000? y/N ";
+    assert!(out.contains(prompt), "{out}");
+    let out = pick(&env, &["answer"], prompt, "y");
+    assert!(
+        out.contains(&format!("print(__noren_restore__\tbg\t{})", f.display())),
+        "{out}"
+    );
+    assert!(out.ends_with("+accept"), "{out}");
+    assert!(
+        mutations(&env).is_empty(),
+        "the picker restores after fzf exits"
+    );
+}
+
+#[test]
+fn restore_of_the_current_session_is_refused_in_the_menu() {
+    let env = setup();
+    let rt = env.home.join("run");
+    fs::create_dir_all(&rt).unwrap();
+    let line = "snapshot\tatt\t/x.kdl\tsnapshot\t📸 #1";
+    let (out, _, _) = env.run_env(
+        &["pick", "enter", line],
+        &[
+            ("NOREN_PICKER_ID", "3"),
+            ("XDG_RUNTIME_DIR", rt.to_str().unwrap()),
+            ("FZF_PROMPT", "📸 att  "),
+            ("ZELLIJ", "1"),
+            ("ZELLIJ_SESSION_NAME", "att"),
+        ],
+    );
+    assert!(out.contains("✗ can't restore att from inside it"), "{out}");
+}
+
+#[test]
+fn ctrl_d_on_a_snapshot_deletes_it_after_y() {
+    let env = setup();
+    let f = snap_dir(&env, "bg").join("20260101-000000.kdl");
+    fs::write(&f, "layout {\n}\n").unwrap();
+    let line = format!("snapshot\tbg\t{}\tsnapshot\t📸 #1", f.display());
+    let out = pick(&env, &["delete", &line], "📸 bg  ", "");
+    let prompt = "⚠ delete snapshot 20260101-000000? y/N ";
+    assert!(out.contains(prompt), "{out}");
+    let out = pick(&env, &["answer"], prompt, "y");
+    assert!(!f.exists());
+    assert!(out.contains("🗑 deleted snapshot 20260101-000000"), "{out}");
+    assert!(
+        out.contains("change-prompt(📸 bg  )"),
+        "back in the menu: {out}"
+    );
+    assert!(mutations(&env).is_empty(), "no session was touched");
+}
+
+#[test]
+fn no_match_in_the_snapshot_menu_does_not_create_a_session() {
+    let env = setup();
+    assert_eq!(pick(&env, &["enter", ""], "📸 bg  ", "zzz"), "ignore");
+}
