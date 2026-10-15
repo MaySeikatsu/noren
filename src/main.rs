@@ -63,6 +63,10 @@ fn main() -> anyhow::Result<()> {
         Some(Cmd::Delete { name, yes }) => {
             actions::cli(&Config::load(), actions::Kind::Delete, &name, yes)
         }
+        Some(Cmd::SnapshotRows { name }) => {
+            println!("{}", picker::snapshot_rows(&name));
+            Ok(())
+        }
         Some(Cmd::Pick { event, line }) => {
             picker::pick(&event, &line.join(" "));
             Ok(())

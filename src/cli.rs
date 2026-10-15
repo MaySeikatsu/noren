@@ -86,6 +86,9 @@ pub enum Cmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         line: Vec<String>,
     },
+    /// picker-internal: snapshot menu rows for a session
+    #[command(hide = true)]
+    SnapshotRows { name: String },
     /// fzf preview command (receives the whole TSV line)
     Preview {
         /// live | layout (default: preview_mode from the config)

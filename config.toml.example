@@ -26,11 +26,26 @@ separator = true
 # sessions instead.
 pinned_dirs_with_sessions = false
 
-# Session preview style: "visual" draws the pane layout as boxes labeled
-# with the running programs; "text" renders the compact tree. Visual mode
-# only reads the saved layout file — it never resurrects dead sessions —
-# and falls back to text when it can't render.
-preview_mode = "visual"
+# Session preview style:
+#   "live"   — running sessions show what their focused pane displays right
+#              now (refreshed while you look); exited sessions and anything
+#              that can't be read fall back to "visual". Exited sessions are
+#              never contacted, so hovering can't resurrect them.
+#   "visual" — the pane layout drawn as boxes labeled with running programs
+#   "text"   — the compact tree
+# Both layout styles read only the saved layout file. In the picker, ^l
+# toggles live/layout (see [keys]).
+preview_mode = "live"
+
+# How often a live preview re-renders while the cursor rests on it (ms).
+# 0 = only when the cursor moves.
+live_refresh_ms = 1000
+
+# Where the preview sits: beside the list when there's room, above it when
+# the terminal is narrow (the list always stays next to the prompt).
+# right | left | up | down
+preview_position         = "right"
+preview_position_compact = "up"
 
 # Hide entries from the picker. `noren list blacklist` shows only these.
 # Sessions and [[session]] entries match by name; folders match by path —
@@ -83,10 +98,12 @@ config   = "ctrl-f"   # view: [[session]] entries
 all      = "ctrl-a"   # view: everything
 reload   = "ctrl-r"   # refresh the current view
 pin      = "ctrl-p"   # pin toggle (sessions by name, folders by path)
-snapshot = "ctrl-s"   # save a layout snapshot of the selected session
+snapshot = "ctrl-s"   # snapshot menu of the selected session: take one,
+                      # restore (⏎), delete (ctrl-d); esc goes back
 kill     = "ctrl-k"   # soft kill (layout survives, session resurrectable)
 delete   = "ctrl-d"   # hard delete (removes the resurrection data)
 preview  = "ctrl-/"   # show/hide the preview
+live     = "ctrl-l"   # session previews: live screen <-> saved layout
 
 # ---- Confirmation -------------------------------------------------------------
 # When kill/delete ask before acting (y/N right in the picker prompt; on a

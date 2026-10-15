@@ -27,10 +27,11 @@ noren merges your **running zellij sessions**, **[zoxide](https://github.com/aje
 
 - **One picker, three sources** — live/exited sessions, zoxide dirs, `[[session]]` config entries; deduplicated (sessions beat config beat dirs), sorted so the most relevant row sits next to the prompt, with a dim hairline separating sessions from folders.
 - **Session-aware everywhere** — inside zellij it switches your client in place (via the [zellij-switch](https://github.com/mostafaqanbaryan/zellij-switch) plugin — never nested attaches); outside it exec's `zellij attach --create`.
-- **Visual previews without resurrection** — the pane layout drawn as box art (focused pane highlighted, running programs labeled), rendered *only* from zellij's serialized layout cache. Hovering a dead session can never wake it.
+- **Live previews** — a running session's preview shows what its focused pane displays *right now*, refreshed while you look; `Ctrl l` flips to the layout view.
+- **Layout previews without resurrection** — the pane layout drawn as box art (focused pane highlighted, running programs labeled), rendered *only* from zellij's serialized layout cache. Exited sessions are never contacted, so hovering one can never wake it.
 - **Attached indicator** — ▣ marks sessions currently shown in a terminal, ▢ ones running in the background.
 - **Pinning** — pin sessions (shared, name-based) and folders (separate, path-based); pinned rows float to the prompt.
-- **Snapshots** — point-in-time backups of a session's layout + running commands; restore any of the last N. Optionally automatic for pinned sessions.
+- **Snapshots** — point-in-time backups of a session's layout + running commands. `Ctrl s` opens a session's snapshot menu: take one, preview any of the last N, restore or delete it. Optionally automatic for pinned sessions.
 - **Project rules** — `[[session]]` entries and `[[wildcard]]` globs assign layouts, startup commands, and preview commands per project; `noren resolve` exposes the same resolver to shell scripts (e.g. an autostart hook).
 - **Discard** — "close tab" for sessions: switch back to your previous session, then soft-kill the one you left.
 - **Alt-tab for sessions** — `noren last` toggles current ↔ previous in place; bound to `Alt Shift Tab` it feels like window switching (see [docs/integration.md](docs/integration.md)).
@@ -91,10 +92,11 @@ noren resolve <target> [--format env|json]
 | `Ctrl t` / `Ctrl z` / `Ctrl f` / `Ctrl a` | view: sessions / dirs / config / all |
 | `Ctrl r` | reload the current view |
 | `Ctrl p` | pin toggle (sessions by name, dirs by path) |
-| `Ctrl s` | snapshot the selected session |
+| `Ctrl s` | snapshot menu of the selected session (⏎ restore, `Ctrl s` take one, `Ctrl d` delete, `Esc` back) |
 | `Ctrl k` | soft-kill the selected session |
 | `Ctrl d` | hard-delete the selected session |
 | `Ctrl /` | show / hide the preview |
+| `Ctrl l` | session previews: live screen ↔ saved layout |
 | `Esc` | close (or cancel a pending confirmation) |
 
 All binds are configurable under `[keys]`; the header inside the picker is generated from the active set. Kill and delete ask `y/N` right in the prompt line when the `[confirm]` policy says so (default: kill asks if a terminal is attached, delete asks if the session is running); killing or deleting the session you are in switches you away first.
@@ -107,7 +109,9 @@ All binds are configurable under `[keys]`; the header inside the picker is gener
 sort_order    = ["zellij", "config", "zoxide"]   # first group = closest to the prompt
 session_order = ["pinned", "live", "exited"]
 separator     = true          # hairline between sessions and folders
-preview_mode  = "visual"      # or "text"
+preview_mode  = "live"        # live screen of running sessions; or "visual" / "text"
+preview_position         = "right"   # beside the list when roomy…
+preview_position_compact = "up"      # …above it when narrow
 snapshot_keep = 5
 auto_snapshot_pinned = false
 attached_indicator   = true   # ▣/▢ (costs ~200ms; false = instant list)
@@ -159,7 +163,7 @@ Zellij keybinds, home-manager module examples, shell bindings, completions, and 
 ## Design notes
 
 - **No TUI framework.** fzf is the UI; noren feeds it TSV and re-execs itself for reloads, previews, and actions. Rust startup is ~milliseconds, so this costs nothing and keeps the binary tiny.
-- **Previews never talk to the zellij server.** Both preview modes render from the serialized layout on disk — a dead session cannot be resurrected by scrolling past it.
+- **Previews never wake a dead session.** Layout previews render from the serialized layout on disk; the live preview only contacts sessions listed as running, under a short timeout, and falls back to the layout render on any failure.
 - **Snapshots capture what zellij serializes** — layout, cwds, running commands — not in-program state. Restore relaunches the commands.
 - **Multi-client caveat:** when two terminals show the same session, switching from inside moves the *oldest* attached client (zellij CLI calls carry no client identity). The ▣ indicator exists so you see shared sessions before joining them.
 

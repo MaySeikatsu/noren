@@ -9,7 +9,7 @@
 
 use std::fs;
 use std::io::{IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::config::Config;
@@ -150,6 +150,51 @@ pub fn snapshot_cmd(cfg: &Config, name: Option<&str>) {
     }
 }
 
+/// Human summary of a snapshot file for the picker: UTC stamp from the
+/// filename, age from its mtime, and the number of tabs it holds.
+pub fn describe(snap: &Path) -> String {
+    let stem = snap
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    // 20261015-162003[-2] -> 2026-10-15 16:20:03
+    let b = stem.as_bytes();
+    let stamp = if b.len() >= 15 && b[8] == b'-' {
+        format!(
+            "{}-{}-{} {}:{}:{} UTC",
+            &stem[0..4],
+            &stem[4..6],
+            &stem[6..8],
+            &stem[9..11],
+            &stem[11..13],
+            &stem[13..15]
+        )
+    } else {
+        stem.clone()
+    };
+    let age = snap
+        .metadata()
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .map(|d| match d.as_secs() {
+            s if s < 60 => "just now".to_string(),
+            s if s < 3600 => format!("{} min ago", s / 60),
+            s if s < 86_400 => format!("{} h ago", s / 3600),
+            s => format!("{} d ago", s / 86_400),
+        })
+        .unwrap_or_default();
+    let tabs = fs::read_to_string(snap)
+        .map(|src| crate::layout_preview::tab_count(&src))
+        .unwrap_or(0);
+    let tabs = match tabs {
+        0 => String::new(),
+        1 => " · 1 tab".to_string(),
+        n => format!(" · {n} tabs"),
+    };
+    format!("{stamp} · {age}{tabs}")
+}
+
 /// `noren snapshots [name]` — newest first, 1-based (restore takes the index).
 pub fn snapshots_cmd(name: Option<&str>) {
     let name = current_or(name);
@@ -183,7 +228,17 @@ pub fn restore_cmd(cfg: &Config, name: &str, index: usize, force: bool) -> anyho
     let Some(snap) = snaps.get(index.max(1) - 1) else {
         anyhow::bail!("\"{name}\" has only {} snapshot(s)", snaps.len());
     };
-    let snap = snap.clone();
+    restore_snapshot(cfg, name, snap, force)
+}
+
+/// Recreate `name` from the snapshot file `snap` (see `restore_cmd`). The
+/// picker restores by file, so a snapshot taken meanwhile can't shift the
+/// index under it.
+pub fn restore_snapshot(cfg: &Config, name: &str, snap: &Path, force: bool) -> anyhow::Result<()> {
+    if !snap.is_file() {
+        anyhow::bail!("snapshot {} no longer exists", snap.display());
+    }
+    let snap = snap.to_path_buf();
     // This process runs in a pane of the session it would kill — it would
     // die halfway, leaving the session gone and nothing recreated.
     if inside_zellij() && std::env::var("ZELLIJ_SESSION_NAME").is_ok_and(|c| c == name) {
@@ -247,6 +302,22 @@ pub fn restore_cmd(cfg: &Config, name: &str, index: usize, force: bool) -> anyho
 #[cfg(test)]
 mod tests {
     use super::fmt_utc;
+
+    #[test]
+    fn describe_reads_stamp_and_tabs() {
+        let dir = std::env::temp_dir().join("noren-test-describe");
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("20261015-162003.kdl");
+        std::fs::write(
+            &f,
+            "layout {\n    tab name=\"a\" {\n    }\n    tab {\n    }\n}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            super::describe(&f),
+            "2026-10-15 16:20:03 UTC · just now · 2 tabs"
+        );
+    }
 
     #[test]
     fn utc_stamp_matches_known_instant() {

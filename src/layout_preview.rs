@@ -726,14 +726,27 @@ fn render_tab_visual(tab: &Node, index: usize, width: usize, height: usize) -> V
 /// pane. Returns None when a visual render isn't possible (missing/empty
 /// layout, no tabs) — callers fall back to the text tree.
 pub fn render_session_visual(name: &str, cols: usize, rows: usize) -> Option<String> {
-    let path = session_layout_file(name);
-    if std::fs::metadata(&path)
+    render_file_visual(&session_layout_file(name), cols, rows)
+}
+
+/// Number of tabs in a serialized layout (direct `tab` children of
+/// `layout` — not tab templates or swap layouts).
+pub fn tab_count(src: &str) -> usize {
+    parse(src)
+        .iter()
+        .find(|n| n.name == "layout")
+        .map_or(0, |l| l.children.iter().filter(|c| c.name == "tab").count())
+}
+
+/// Box-art render of any serialized layout file (session cache, snapshot).
+pub fn render_file_visual(path: &Path, cols: usize, rows: usize) -> Option<String> {
+    if std::fs::metadata(path)
         .map(|m| m.len() == 0)
         .unwrap_or(true)
     {
         return None;
     }
-    let src = std::fs::read(&path).ok()?;
+    let src = std::fs::read(path).ok()?;
     let nodes = parse(&String::from_utf8_lossy(&src));
     let layout = nodes.iter().find(|n| n.name == "layout")?;
     let tabs: Vec<&Node> = layout.children.iter().filter(|c| c.name == "tab").collect();

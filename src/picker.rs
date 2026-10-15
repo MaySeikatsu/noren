@@ -34,6 +34,12 @@ const HINT: &str = "type to filter · ⏎ on no match creates a session";
 /// $FZF_PREVIEW_LABEL.
 const LABEL_LIVE: &str = " ● live ";
 const LABEL_LAYOUT: &str = " ▦ layout ";
+/// Snapshot menu: prompt is "📸 <session>  "; its rows come from
+/// `noren snapshot-rows <session>`.
+const SNAP_PREFIX: &str = "📸 ";
+const SNAP_HINT: &str = "⏎ restore · ^s snapshot now · ^d delete snapshot · esc back";
+/// stdout marker: restore after fzf exits (it may exec zellij).
+const RESTORE_MARK: &str = "__noren_restore__\t";
 
 /// The binary fzf binds re-exec. current_exe keeps the picker working when
 /// noren isn't on PATH (cargo target dir, nix result/).
@@ -94,7 +100,7 @@ fn header(cfg: &Config, warnings: &[String]) -> String {
     let acts = line(
         vec![
             item("pin", "pin"),
-            item("snapshot", "snapshot"),
+            item("snapshot", "snapshots"),
             item("kill", "kill"),
             item("delete", "delete"),
         ],
@@ -242,11 +248,16 @@ pub fn picker() -> anyhow::Result<()> {
     if !out.status.success() {
         return Ok(());
     }
-    let line = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let Some(target) = target_for(&line) else {
-        return Ok(());
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let result = if let Some(rest) = stdout.lines().find_map(|l| l.strip_prefix(RESTORE_MARK)) {
+        let (name, file) = rest.split_once('\t').unwrap_or((rest, ""));
+        crate::snapshot::restore_snapshot(&cfg, name, std::path::Path::new(file), true)
+    } else {
+        let Some(target) = target_for(stdout.trim()) else {
+            return Ok(());
+        };
+        session_connect(&cfg, &target)
     };
-    let result = session_connect(&cfg, &target);
     if let Err(e) = &result
         && crate::connect::inside_zellij()
         && std::io::stdin().is_terminal()
@@ -378,14 +389,58 @@ fn pending_file(id: &str) -> PathBuf {
     runtime_dir().join(format!("noren-pick-{id}"))
 }
 
+/// What a pending confirmation will do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Action {
+    Kill,
+    Delete,
+    /// Recreate the session from the snapshot file in `Pending::file`.
+    Restore,
+    /// Delete the snapshot file in `Pending::file`.
+    DropSnapshot,
+}
+
+impl Action {
+    fn word(self) -> &'static str {
+        match self {
+            Action::Kill => "kill",
+            Action::Delete => "delete",
+            Action::Restore => "restore",
+            Action::DropSnapshot => "drop",
+        }
+    }
+
+    fn from_word(w: &str) -> Option<Action> {
+        [
+            Action::Kill,
+            Action::Delete,
+            Action::Restore,
+            Action::DropSnapshot,
+        ]
+        .into_iter()
+        .find(|a| a.word() == w)
+    }
+
+    fn cancelled(self) -> &'static str {
+        match self {
+            Action::Kill => "kill cancelled",
+            Action::Delete => "delete cancelled",
+            Action::Restore => "restore cancelled",
+            Action::DropSnapshot => "snapshot kept",
+        }
+    }
+}
+
 /// A y/N confirmation waiting for its answer.
 struct Pending {
-    kind: Kind,
+    action: Action,
     name: String,
     /// The prompt to go back to.
     prev_prompt: String,
     /// The confirmation prompt (to recognize stale state).
     prompt: String,
+    /// Snapshot file for Restore / DropSnapshot.
+    file: String,
 }
 
 fn picker_id() -> String {
@@ -395,16 +450,12 @@ fn picker_id() -> String {
 fn read_pending() -> Option<Pending> {
     let raw = std::fs::read_to_string(pending_file(&picker_id())).ok()?;
     let mut l = raw.split('\n');
-    let kind = match l.next()? {
-        "kill" => Kind::Kill,
-        "delete" => Kind::Delete,
-        _ => return None,
-    };
     Some(Pending {
-        kind,
+        action: Action::from_word(l.next()?)?,
         name: l.next()?.to_string(),
         prev_prompt: l.next()?.to_string(),
         prompt: l.next()?.to_string(),
+        file: l.next().unwrap_or("").to_string(),
     })
 }
 
@@ -412,11 +463,12 @@ fn write_pending(p: &Pending) {
     let _ = std::fs::write(
         pending_file(&picker_id()),
         format!(
-            "{}\n{}\n{}\n{}",
-            p.kind.verb(),
+            "{}\n{}\n{}\n{}\n{}",
+            p.action.word(),
             p.name,
             p.prev_prompt,
-            p.prompt
+            p.prompt,
+            p.file
         ),
     );
 }
@@ -440,8 +492,22 @@ fn active_pending() -> Option<Pending> {
     }
 }
 
+/// The session whose snapshot menu the prompt shows, if any.
+fn snap_view(prompt: &str) -> Option<&str> {
+    prompt.strip_prefix(SNAP_PREFIX).map(str::trim_end)
+}
+
 fn reload(exe: &str, prompt: &str) -> String {
-    act("reload", &format!("{exe} list {}", view_source(prompt)))
+    let cmd = match snap_view(prompt) {
+        Some(name) => format!("{exe} snapshot-rows {}", crate::util::shell_quote(name)),
+        None => format!("{exe} list {}", view_source(prompt)),
+    };
+    act("reload", &cmd)
+}
+
+/// Where the snapshot menu returns to on esc.
+fn view_file() -> PathBuf {
+    runtime_dir().join(format!("noren-pick-{}.view", picker_id()))
 }
 
 /// Leave confirmation mode: back to the previous prompt (no reload).
@@ -514,12 +580,19 @@ pub fn pick(event: &str, line: &str) {
     let out = match event {
         "enter" => match active_pending() {
             // ⏎ answers the default: No.
-            Some(p) => restore(&exe, &p, &format!("{} cancelled", p.kind.verb())),
-            None if row.source == "sep" => "ignore".to_string(),
-            None => "accept-or-print-query".to_string(),
+            Some(p) => restore(&exe, &p, p.action.cancelled()),
+            None => match row.source {
+                "sep" => "ignore".to_string(),
+                "snapnew" => snapshot_now(&cfg, &exe, row.name),
+                "snapshot" => confirm_snapshot(Action::Restore, &row),
+                // No match in the snapshot menu: nothing to create.
+                _ if snap_view(&fzf_prompt()).is_some() => "ignore".to_string(),
+                _ => "accept-or-print-query".to_string(),
+            },
         },
         "esc" => match active_pending() {
-            Some(p) => restore(&exe, &p, &format!("{} cancelled", p.kind.verb())),
+            Some(p) => restore(&exe, &p, p.action.cancelled()),
+            None if snap_view(&fzf_prompt()).is_some() => leave_snapshots(&exe),
             None => "abort".to_string(),
         },
         "answer" => match active_pending() {
@@ -528,12 +601,8 @@ pub fn pick(event: &str, line: &str) {
                 let q = std::env::var("FZF_QUERY").unwrap_or_default();
                 match q.trim() {
                     "" => String::new(),
-                    "y" | "Y" => {
-                        let state = actions::session_state(&cfg, &p.name);
-                        let done = run_kind(&exe, p.kind, &p.name, state, &p.prev_prompt);
-                        format!("{}+{done}", leave_confirm(&p))
-                    }
-                    _ => restore(&exe, &p, &format!("{} cancelled", p.kind.verb())),
+                    "y" | "Y" => confirmed(&cfg, &exe, &p),
+                    _ => restore(&exe, &p, p.action.cancelled()),
                 }
             }
         },
@@ -543,7 +612,8 @@ pub fn pick(event: &str, line: &str) {
         },
         "preview-mode" => toggle_preview_mode(&exe),
         "pin" => pin(&cfg, &exe, &row),
-        "snapshot" => snapshot(&cfg, &row),
+        "snapshot" => snapshot_key(&cfg, &exe, &row),
+        "delete" if row.source == "snapshot" => confirm_snapshot(Action::DropSnapshot, &row),
         "kill" | "delete" => {
             let kind = if event == "kill" {
                 Kind::Kill
@@ -582,7 +652,11 @@ fn confirm_or_run(cfg: &Config, exe: &str, kind: Kind, row: &Row) -> String {
     let prompt = format!("⚠ {} {what} {}? y/N ", kind.verb(), row.name);
     let prev = fzf_prompt();
     write_pending(&Pending {
-        kind,
+        action: if kind == Kind::Kill {
+            Action::Kill
+        } else {
+            Action::Delete
+        },
         name: row.name.to_string(),
         prev_prompt: if prev.is_empty() {
             DEFAULT_PROMPT.to_string()
@@ -590,6 +664,7 @@ fn confirm_or_run(cfg: &Config, exe: &str, kind: Kind, row: &Row) -> String {
             prev
         },
         prompt: prompt.clone(),
+        file: String::new(),
     });
     [
         "change-query()".to_string(),
@@ -639,17 +714,145 @@ fn pin(cfg: &Config, exe: &str, row: &Row) -> String {
     format!("{}+{}", reload(exe, &fzf_prompt()), ghost(&msg))
 }
 
-fn snapshot(cfg: &Config, row: &Row) -> String {
+/// A confirmed action; fzf actions out.
+fn confirmed(cfg: &Config, exe: &str, p: &Pending) -> String {
+    match p.action {
+        Action::Kill | Action::Delete => {
+            let kind = if p.action == Action::Kill {
+                Kind::Kill
+            } else {
+                Kind::Delete
+            };
+            let state = actions::session_state(cfg, &p.name);
+            let done = run_kind(exe, kind, &p.name, state, &p.prev_prompt);
+            format!("{}+{done}", leave_confirm(p))
+        }
+        // Restoring may exec zellij (outside) or switch this client
+        // (inside): hand it to the picker process after fzf has exited.
+        Action::Restore => format!(
+            "{}+{}+accept",
+            leave_confirm(p),
+            act("print", &format!("{RESTORE_MARK}{}\t{}", p.name, p.file))
+        ),
+        Action::DropSnapshot => {
+            let msg = match std::fs::remove_file(&p.file) {
+                Ok(()) => format!("🗑 deleted snapshot {}", file_stem(&p.file)),
+                Err(e) => format!("✗ {e}"),
+            };
+            restore(exe, p, &msg)
+        }
+    }
+}
+
+fn file_stem(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// ^s: on a session, open its snapshot menu; inside the menu, take one.
+fn snapshot_key(cfg: &Config, exe: &str, row: &Row) -> String {
+    if active_pending().is_some() {
+        return String::new();
+    }
+    let prompt = fzf_prompt();
+    if let Some(name) = snap_view(&prompt) {
+        return snapshot_now(cfg, exe, name);
+    }
     if row.source != "zellij" || row.name.is_empty() {
-        return ghost("✗ snapshots are taken of sessions");
+        return ghost("✗ snapshots are kept per session — select a session");
     }
-    match crate::snapshot::take_snapshot(cfg, row.name) {
-        Ok(_) => ghost(&format!(
-            "📸 snapshot of {} saved (keeping {})",
-            row.name, cfg.snapshot_keep
-        )),
-        Err(e) => ghost(&format!("✗ {e}")),
+    let _ = std::fs::write(view_file(), &prompt);
+    let menu = format!("{SNAP_PREFIX}{}  ", row.name);
+    [
+        "change-query()".to_string(),
+        act("change-prompt", &menu),
+        reload(exe, &menu),
+        ghost(SNAP_HINT),
+    ]
+    .join("+")
+}
+
+/// Back from the snapshot menu to the view it was opened from.
+fn leave_snapshots(exe: &str) -> String {
+    let prev = std::fs::read_to_string(view_file())
+        .ok()
+        .filter(|p| !p.is_empty() && snap_view(p).is_none())
+        .unwrap_or_else(|| DEFAULT_PROMPT.to_string());
+    let _ = std::fs::remove_file(view_file());
+    [
+        "change-query()".to_string(),
+        act("change-prompt", &prev),
+        reload(exe, &prev),
+        ghost(HINT),
+    ]
+    .join("+")
+}
+
+fn snapshot_now(cfg: &Config, exe: &str, name: &str) -> String {
+    let msg = match crate::snapshot::take_snapshot(cfg, name) {
+        Ok(f) => format!(
+            "📸 saved {} (keeping {})",
+            file_stem(&f.to_string_lossy()),
+            cfg.snapshot_keep
+        ),
+        Err(e) => format!("✗ {e}"),
+    };
+    format!("{}+{}", reload(exe, &fzf_prompt()), ghost(&msg))
+}
+
+/// y/N for restoring from / deleting a snapshot row.
+fn confirm_snapshot(action: Action, row: &Row) -> String {
+    if action == Action::Restore && actions::is_current(row.name) {
+        return ghost(&format!(
+            "✗ can't restore {} from inside it — switch to another session first",
+            row.name
+        ));
     }
+    let stem = file_stem(row.path);
+    let prompt = match action {
+        Action::Restore => format!("⚠ restore {} to {stem}? y/N ", row.name),
+        _ => format!("⚠ delete snapshot {stem}? y/N "),
+    };
+    let hint = match action {
+        Action::Restore => {
+            "y = restore (the current state is snapshotted first) · any other key = cancel"
+        }
+        _ => "y = delete this snapshot · any other key = cancel",
+    };
+    let prev = fzf_prompt();
+    write_pending(&Pending {
+        action,
+        name: row.name.to_string(),
+        prev_prompt: prev,
+        prompt: prompt.clone(),
+        file: row.path.to_string(),
+    });
+    [
+        "change-query()".to_string(),
+        act("change-prompt", &prompt),
+        ghost(hint),
+        "rebind(change)".to_string(),
+    ]
+    .join("+")
+}
+
+/// `noren snapshot-rows <session>` — the snapshot menu's TSV rows: a
+/// "take one now" row (next to the prompt), then snapshots newest first.
+pub fn snapshot_rows(name: &str) -> String {
+    let mut rows = vec![format!(
+        "snapnew\t{name}\t\tsnapnew\t＋ take a snapshot of {name} now"
+    )];
+    for (i, f) in crate::snapshot::list_snapshots(name).iter().enumerate() {
+        rows.push(format!(
+            "snapshot\t{name}\t{}\tsnapshot\t📸 #{}  {}",
+            f.display(),
+            i + 1,
+            crate::snapshot::describe(f)
+        ));
+    }
+    rows.join("\n")
 }
 
 #[cfg(test)]

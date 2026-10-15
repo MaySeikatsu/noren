@@ -198,6 +198,19 @@ pub fn preview(cfg: &Config, line: &str, mode: Option<&str>) {
             .and_then(|(w, h)| crate::live_preview::render_live(r.name, w, h))
             .unwrap_or_else(|| layout_render(cfg, r.name)),
         "live" | "exited" => layout_render(cfg, r.name),
+        // Snapshot menu: what a snapshot holds (the file only), and for the
+        // "take one now" row what the session's cache looks like.
+        "snapshot" => {
+            let file = std::path::Path::new(r.path);
+            let head = format!("\x1b[1m📸 {}\x1b[0m", crate::snapshot::describe(file));
+            let body = (cfg.preview_mode != "text")
+                .then(fzf_preview_dims)
+                .flatten()
+                .and_then(|(w, h)| layout_preview::render_file_visual(file, w, h - 1))
+                .unwrap_or_else(|| layout_preview::render_file(file));
+            format!("{head}\n{body}")
+        }
+        "snapnew" => layout_render(cfg, r.name),
         "config" => {
             let pv = cfg
                 .find_session(r.name)
