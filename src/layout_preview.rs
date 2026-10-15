@@ -396,14 +396,20 @@ fn join_cwd(base: &Path, node: &Node) -> PathBuf {
 
 /// Depth-first search for the focused leaf pane, carrying the resolved cwd.
 fn focused_leaf<'a>(nodes: &[&'a Node], base: &Path) -> Option<(&'a Node, PathBuf)> {
+    first_leaf(nodes, base, true)
+}
+
+/// First non-status leaf pane (depth-first), optionally only a focused one.
+fn first_leaf<'a>(nodes: &[&'a Node], base: &Path, focused: bool) -> Option<(&'a Node, PathBuf)> {
     for n in nodes {
         let cwd = join_cwd(base, n);
         let kids: Vec<&Node> = n.children.iter().filter(|c| c.name == "pane").collect();
         if kids.is_empty() {
-            if !is_status_pane(n) && n.props.get("focus").map(String::as_str) == Some("true") {
+            let hit = !focused || n.props.get("focus").map(String::as_str) == Some("true");
+            if !is_status_pane(n) && hit {
                 return Some((n, cwd));
             }
-        } else if let Some(hit) = focused_leaf(&kids, &cwd) {
+        } else if let Some(hit) = first_leaf(&kids, &cwd, focused) {
             return Some(hit);
         }
     }
@@ -418,12 +424,18 @@ fn focus_summary(nodes: &[Node]) -> Option<FocusSummary> {
         .find(|c| c.name == "cwd" && !c.args.is_empty())
         .map(|c| PathBuf::from(&c.args[0]))
         .unwrap_or_default();
-    let (index, tab) = layout
-        .children
-        .iter()
-        .filter(|c| c.name == "tab")
-        .enumerate()
-        .find(|(_, t)| t.props.get("focus").map(String::as_str) == Some("true"))?;
+    // Older/partial serializations carry no focus markers: fall back to
+    // the first tab and its first pane rather than showing nothing.
+    let tabs = || {
+        layout
+            .children
+            .iter()
+            .filter(|c| c.name == "tab")
+            .enumerate()
+    };
+    let (index, tab) = tabs()
+        .find(|(_, t)| t.props.get("focus").map(String::as_str) == Some("true"))
+        .or_else(|| tabs().next())?;
     let name = tab
         .props
         .get("name")
@@ -438,7 +450,9 @@ fn focus_summary(nodes: &[Node]) -> Option<FocusSummary> {
         .filter(|c| c.name == "floating_panes")
         .flat_map(|f| f.children.iter().filter(|c| c.name == "pane"))
         .collect();
-    let leaf = focused_leaf(&tiled, &tab_cwd).or_else(|| focused_leaf(&floating, &tab_cwd));
+    let leaf = focused_leaf(&tiled, &tab_cwd)
+        .or_else(|| focused_leaf(&floating, &tab_cwd))
+        .or_else(|| first_leaf(&tiled, &tab_cwd, false));
     let (command, cwd) = match leaf {
         Some((pane, cwd)) => {
             let cmd = basename_cmd(pane.props.get("command").map(String::as_str).unwrap_or(""));
@@ -823,20 +837,29 @@ Tab 1: Tab #1  *
     }
 
     #[test]
-    fn focus_summary_needs_a_focused_tab() {
+    fn focus_summary_falls_back_to_first_tab_and_pane() {
+        // No focus markers at all: first tab, first pane.
         let src = "layout {\n cwd \"/x\"\n tab name=\"t\" {\n pane command=\"hx\"\n }\n}\n";
-        assert_eq!(focus_summary(&parse(src)), None);
-        // Focused tab without a pane marker: tab cwd, no command.
-        let src =
-            "layout {\n cwd \"/x\"\n tab focus=true cwd=\"/abs\" {\n pane command=\"hx\"\n }\n}\n";
         assert_eq!(
             focus_summary(&parse(src)),
             Some(FocusSummary {
-                tab: "#1".into(),
-                command: None,
+                tab: "t".into(),
+                command: Some("hx".into()),
+                cwd: "/x".into(),
+            })
+        );
+        // Focused tab without a pane marker: its first pane.
+        let src = "layout {\n cwd \"/x\"\n tab name=\"a\" {\n pane\n }\n tab focus=true cwd=\"/abs\" {\n pane command=\"hx\"\n }\n}\n";
+        assert_eq!(
+            focus_summary(&parse(src)),
+            Some(FocusSummary {
+                tab: "#2".into(),
+                command: Some("hx".into()),
                 cwd: "/abs".into(),
             })
         );
+        // No tabs: nothing to summarize.
+        assert_eq!(focus_summary(&parse("layout {\n}\n")), None);
     }
 
     #[test]

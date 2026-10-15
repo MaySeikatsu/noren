@@ -257,7 +257,7 @@ fn session_preview_resolves_relative_pane_cwd_and_abbreviates_home() {
 }
 
 #[test]
-fn session_preview_without_focus_markers_has_no_summary() {
+fn session_preview_without_focus_markers_summarizes_first_tab() {
     let env = Env::new();
     install_layout(
         &env,
@@ -265,5 +265,8 @@ fn session_preview_without_focus_markers_has_no_summary() {
         "layout {\n    cwd \"/x\"\n    tab name=\"t\" {\n        pane\n    }\n}\n",
     );
     let (out, _, _) = env.run(&["preview", "zellij\ts\t\tlive\t▢ s"]);
-    assert_eq!(out, "cwd: /x\n\nTab 1: t\n  └─ (shell)\n");
+    assert_eq!(
+        out,
+        "\x1b[1m▸ t · shell · /x\x1b[0m\ncwd: /x\n\nTab 1: t\n  └─ (shell)\n"
+    );
 }
