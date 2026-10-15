@@ -9,6 +9,10 @@ the name with `"inline"`. Running sessions report their current tabs;
 exited ones are read from the saved layout (never contacted). Long lists
 are cut with `…`.
 
+Fixes: menu hints and status messages (e.g. "⏎ go to this tab · esc back",
+"📌 pinned …") were swallowed when the list reloaded in the same step — a
+side effect of 0.2.3's cursor tracking.
+
 **All tabs live (opt-in).** `live_all_tabs = true` turns the live preview
 into a grid of every tab's focused pane — background tabs stay current —
 side by side when there's room, stacked when narrow; the active tab's title

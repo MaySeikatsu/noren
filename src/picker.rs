@@ -865,7 +865,7 @@ fn run_kind(exe: &str, kind: Kind, name: &str, state: SessionState, view_prompt:
         Ok(m) => format!("✓ {m}"),
         Err(e) => format!("✗ {e}"),
     };
-    format!("{}+{}", reload(exe, view_prompt), act("change-ghost", &msg))
+    format!("{}+{}", act("change-ghost", &msg), reload(exe, view_prompt))
 }
 
 fn ghost(msg: &str) -> String {
@@ -924,7 +924,7 @@ pub fn pick(event: &str, line: &str) {
         },
         "reload" => match active_pending() {
             Some(p) => restore(&exe, &p, HINT),
-            None => format!("{}+{}", reload(&exe, &fzf_prompt()), ghost(HINT)),
+            None => format!("{}+{}", ghost(HINT), reload(&exe, &fzf_prompt())),
         },
         "preview-mode" => toggle_preview_mode(&cfg),
         "header" => {
@@ -1177,7 +1177,7 @@ fn hide(cfg: &Config, exe: &str, line: &str) -> String {
     } else {
         format!("👁 {label} is visible again")
     };
-    format!("{}+{}", reload(exe, &fzf_prompt()), ghost(&msg))
+    format!("{}+{}", ghost(&msg), reload(exe, &fzf_prompt()))
 }
 
 /// Alt h: list hidden entries (⊘, dim) alongside the rest, or not.
@@ -1190,7 +1190,7 @@ fn toggle_show_hidden(exe: &str) -> String {
         let _ = std::fs::write(&f, "");
         "showing hidden entries (⊘) · ^h on one unhides it"
     };
-    format!("{}+{}", reload(exe, &fzf_prompt()), ghost(msg))
+    format!("{}+{}", ghost(msg), reload(exe, &fzf_prompt()))
 }
 
 /// ^/: cycle the preview live → layout → text → off → live. The preview
@@ -1230,7 +1230,7 @@ fn pin(cfg: &Config, exe: &str, row: &Row) -> String {
         }
         _ => return ghost("✗ only sessions and folders can be pinned"),
     };
-    format!("{}+{}", reload(exe, &fzf_prompt()), ghost(&msg))
+    format!("{}+{}", ghost(&msg), reload(exe, &fzf_prompt()))
 }
 
 /// A confirmed action; fzf actions out.
@@ -1294,8 +1294,8 @@ fn snapshot_key(cfg: &Config, exe: &str, row: &Row) -> String {
     [
         "change-query()".to_string(),
         act("change-prompt", &menu),
-        reload(exe, &menu),
         ghost(SNAP_HINT),
+        reload(exe, &menu),
     ]
     .join("+")
 }
@@ -1314,8 +1314,8 @@ fn tabs_key(exe: &str, row: &Row) -> String {
     [
         "change-query()".to_string(),
         act("change-prompt", &menu),
-        reload(exe, &menu),
         ghost(TAB_HINT),
+        reload(exe, &menu),
     ]
     .join("+")
 }
@@ -1330,8 +1330,8 @@ fn leave_snapshots(exe: &str) -> String {
     [
         "change-query()".to_string(),
         act("change-prompt", &prev),
-        reload(exe, &prev),
         ghost(HINT),
+        reload(exe, &prev),
     ]
     .join("+")
 }
@@ -1345,7 +1345,7 @@ fn snapshot_now(cfg: &Config, exe: &str, name: &str) -> String {
         ),
         Err(e) => format!("✗ {e}"),
     };
-    format!("{}+{}", reload(exe, &fzf_prompt()), ghost(&msg))
+    format!("{}+{}", ghost(&msg), reload(exe, &fzf_prompt()))
 }
 
 /// y/N for restoring from / deleting a snapshot row.

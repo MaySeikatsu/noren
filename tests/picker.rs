@@ -250,7 +250,9 @@ fn pick_pin_dir_reloads_current_view() {
 fn pick_reload_keeps_the_view() {
     let env = setup();
     let out = pick(&env, &["reload"], "⚙  ", "");
-    assert!(out.starts_with("reload("), "{out}");
+    // The reload comes last: with --track, fzf drops actions chained
+    // after a reload (status text would be lost).
+    assert!(out.ends_with(" list config)"), "{out}");
     assert!(out.contains(" list config)"), "{out}");
 }
 
@@ -895,4 +897,22 @@ fn auto_reload_relists_the_view_but_never_disturbs_a_pending_action() {
     pick(&env, &["delete", &row("zellij", "bg", "live")], "▢  ", "");
     let prompt = "⚠ delete running session bg? y/N ";
     assert_eq!(pick(&env, &["auto-reload"], prompt, ""), "");
+}
+
+#[test]
+fn status_text_always_precedes_the_reload() {
+    // fzf (--track) drops whatever follows a reload in one action chain.
+    let env = setup();
+    for (args, prompt) in [
+        (vec!["snapshot", "zellij\tbg\t\tlive\t▢ bg"], "⚡  "),
+        (vec!["pin", "zoxide\ttmp\t/tmp\tdir\ttmp"], "⚡  "),
+        (vec!["hide", "zellij\tbg\t\tlive\t▢ bg"], "⚡  "),
+        (vec!["kill", "zellij\tbg\t\tlive\t▢ bg"], "⚡  "),
+        (vec!["reload"], "⚡  "),
+    ] {
+        let out = pick(&env, &args, prompt, "");
+        if let (Some(g), Some(r)) = (out.find("change-ghost"), out.find("reload(")) {
+            assert!(g < r, "{args:?}: {out}");
+        }
+    }
 }
