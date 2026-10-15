@@ -1,5 +1,15 @@
 # Release notes
 
+## 0.2.2
+
+**Tab menu.** `Alt t` on a session opens its tabs: name, focused program and
+directory, the active tab marked `●`; the preview shows that tab's live
+screen (or the saved layout for exited sessions, which are never
+contacted). `⏎` connects and lands in that tab — inside zellij the client
+switches and then moves to the tab; from a plain terminal noren attaches
+and a small helper moves the new client once it has arrived. `Esc` returns
+to the previous view.
+
 ## 0.2.1
 
 **Snapshot menu in the picker.** `Ctrl s` on a session now opens its

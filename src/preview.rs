@@ -211,6 +211,18 @@ pub fn preview(cfg: &Config, line: &str, mode: Option<&str>) {
             format!("{head}\n{body}")
         }
         "snapnew" => layout_render(cfg, r.name),
+        // Tab menu: that tab's live screen when the session runs (path
+        // holds the 1-based position), else the saved layout.
+        "tab" => {
+            let position: usize = r.path.parse().unwrap_or(1);
+            fzf_preview_dims()
+                .filter(|_| cfg.preview_mode == "live")
+                .and_then(|(w, h)| {
+                    crate::live_preview::render_live_tab(r.name, position.saturating_sub(1), w, h)
+                })
+                .unwrap_or_else(|| layout_render(cfg, r.name))
+        }
+        "tabnone" => String::new(),
         "config" => {
             let pv = cfg
                 .find_session(r.name)

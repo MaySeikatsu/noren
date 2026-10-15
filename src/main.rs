@@ -11,6 +11,7 @@ mod session;
 mod snapshot;
 mod sources;
 mod state;
+mod tabs;
 mod util;
 mod window;
 
@@ -62,6 +63,18 @@ fn main() -> anyhow::Result<()> {
         }
         Some(Cmd::Delete { name, yes }) => {
             actions::cli(&Config::load(), actions::Kind::Delete, &name, yes)
+        }
+        Some(Cmd::TabRows { name }) => {
+            println!("{}", tabs::tab_rows(&name));
+            Ok(())
+        }
+        Some(Cmd::GotoTab {
+            session,
+            position,
+            before,
+        }) => {
+            tabs::goto_helper(&session, position, before);
+            Ok(())
         }
         Some(Cmd::SnapshotRows { name }) => {
             println!("{}", picker::snapshot_rows(&name));

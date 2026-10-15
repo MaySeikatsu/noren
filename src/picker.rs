@@ -38,9 +38,13 @@ const LABEL_LAYOUT: &str = " ▦ layout ";
 /// `noren snapshot-rows <session>`.
 const SNAP_PREFIX: &str = "📸 ";
 const SNAP_HINT: &str = "⏎ restore · ^s snapshot now · ^d delete snapshot · esc back";
+/// Tab menu: prompt is "▤ <session>  "; rows from `noren tab-rows`.
+const TAB_PREFIX: &str = "▤ ";
+const TAB_HINT: &str = "⏎ go to this tab · esc back";
 /// stdout markers for work done after fzf exits (it may exec zellij).
 const RESTORE_MARK: &str = "__noren_restore__\t";
 const MKDIR_MARK: &str = "__noren_mkdir__\t";
+const TAB_MARK: &str = "__noren_tab__\t";
 
 /// The binary fzf binds re-exec. current_exe keeps the picker working when
 /// noren isn't on PATH (cargo target dir, nix result/).
@@ -128,6 +132,7 @@ fn header(cfg: &Config, warnings: &[String], width: Option<usize>) -> String {
         item("hide", "hide"),
         item("rename", "rename"),
         item("snapshot", "snapshots"),
+        item("tabs", "tabs"),
         item("kill", "kill"),
         item("delete", "delete"),
         fixed("esc", "close"),
@@ -178,6 +183,7 @@ fn fzf_binds(cfg: &Config, exe: &str) -> Vec<String> {
             "preview" => "toggle-preview".to_string(),
             "hide" => format!("transform({exe} pick hide {{}})"),
             "rename" => format!("transform({exe} pick rename {{}})"),
+            "tabs" => format!("transform({exe} pick tabs {{}})"),
             "paths" => format!("transform({exe} pick paths)"),
             "hidden" => format!("transform({exe} pick show-hidden)"),
             "live" => format!("transform({exe} pick preview-mode)"),
@@ -300,6 +306,9 @@ pub fn picker() -> anyhow::Result<()> {
     let result = if let Some(rest) = stdout.lines().find_map(|l| l.strip_prefix(RESTORE_MARK)) {
         let (name, file) = rest.split_once('\t').unwrap_or((rest, ""));
         crate::snapshot::restore_snapshot(&cfg, name, std::path::Path::new(file), true)
+    } else if let Some(rest) = stdout.lines().find_map(|l| l.strip_prefix(TAB_MARK)) {
+        let (session, pos) = rest.split_once('\t').unwrap_or((rest, "1"));
+        crate::tabs::connect_tab(&cfg, session, pos.parse().unwrap_or(1))
     } else if let Some(dir) = stdout.lines().find_map(|l| l.strip_prefix(MKDIR_MARK)) {
         std::fs::create_dir_all(dir)
             .map_err(anyhow::Error::from)
@@ -559,10 +568,23 @@ fn snap_view(prompt: &str) -> Option<&str> {
     prompt.strip_prefix(SNAP_PREFIX).map(str::trim_end)
 }
 
+/// The session whose tab menu the prompt shows, if any.
+fn tab_view(prompt: &str) -> Option<&str> {
+    prompt.strip_prefix(TAB_PREFIX).map(str::trim_end)
+}
+
+/// In a per-session menu (snapshots, tabs)?
+fn in_menu(prompt: &str) -> bool {
+    snap_view(prompt).is_some() || tab_view(prompt).is_some()
+}
+
 fn reload(exe: &str, prompt: &str) -> String {
-    let cmd = match snap_view(prompt) {
-        Some(name) => format!("{exe} snapshot-rows {}", crate::util::shell_quote(name)),
-        None => format!("{exe} list {}", view_source(prompt)),
+    let cmd = if let Some(name) = snap_view(prompt) {
+        format!("{exe} snapshot-rows {}", crate::util::shell_quote(name))
+    } else if let Some(name) = tab_view(prompt) {
+        format!("{exe} tab-rows {}", crate::util::shell_quote(name))
+    } else {
+        format!("{exe} list {}", view_source(prompt))
     };
     act("reload", &cmd)
 }
@@ -659,8 +681,13 @@ pub fn pick(event: &str, line: &str) {
                 "sep" => "ignore".to_string(),
                 "snapnew" => snapshot_now(&cfg, &exe, row.name),
                 "snapshot" => confirm_snapshot(Action::Restore, &row),
-                // No match in the snapshot menu: nothing to create.
-                _ if snap_view(&fzf_prompt()).is_some() => "ignore".to_string(),
+                // Tab menu: connect + land in the tab after fzf exits.
+                "tab" => format!(
+                    "{}+accept",
+                    act("print", &format!("{TAB_MARK}{}\t{}", row.name, row.path))
+                ),
+                // No match in a menu: nothing to create.
+                _ if in_menu(&fzf_prompt()) => "ignore".to_string(),
                 // A path-like query means that path (names never start with
                 // / ~ ./): go there, or offer to create it — whatever fuzzy
                 // match happens to be under the cursor.
@@ -670,7 +697,7 @@ pub fn pick(event: &str, line: &str) {
         },
         "esc" => match active_pending() {
             Some(p) => restore(&exe, &p, p.action.cancelled()),
-            None if snap_view(&fzf_prompt()).is_some() => leave_snapshots(&exe),
+            None if in_menu(&fzf_prompt()) => leave_snapshots(&exe),
             None => "abort".to_string(),
         },
         "answer" => match active_pending() {
@@ -703,6 +730,7 @@ pub fn pick(event: &str, line: &str) {
         "show-hidden" => toggle_show_hidden(&exe),
         "pin" => pin(&cfg, &exe, &row),
         "snapshot" => snapshot_key(&cfg, &exe, &row),
+        "tabs" => tabs_key(&exe, &row),
         "delete" if row.source == "snapshot" => confirm_snapshot(Action::DropSnapshot, &row),
         "kill" | "delete" => {
             let kind = if event == "kill" {
@@ -1023,11 +1051,31 @@ fn snapshot_key(cfg: &Config, exe: &str, row: &Row) -> String {
     .join("+")
 }
 
-/// Back from the snapshot menu to the view it was opened from.
+/// alt-t: open the selected session's tab menu.
+fn tabs_key(exe: &str, row: &Row) -> String {
+    let prompt = fzf_prompt();
+    if active_pending().is_some() || in_menu(&prompt) {
+        return String::new();
+    }
+    if row.source != "zellij" || row.name.is_empty() {
+        return ghost("✗ tabs belong to sessions — select a session");
+    }
+    let _ = std::fs::write(view_file(), &prompt);
+    let menu = format!("{TAB_PREFIX}{}  ", row.name);
+    [
+        "change-query()".to_string(),
+        act("change-prompt", &menu),
+        reload(exe, &menu),
+        ghost(TAB_HINT),
+    ]
+    .join("+")
+}
+
+/// Back from a menu (snapshots, tabs) to the view it was opened from.
 fn leave_snapshots(exe: &str) -> String {
     let prev = std::fs::read_to_string(view_file())
         .ok()
-        .filter(|p| !p.is_empty() && snap_view(p).is_none())
+        .filter(|p| !p.is_empty() && !in_menu(p))
         .unwrap_or_else(|| DEFAULT_PROMPT.to_string());
     let _ = std::fs::remove_file(view_file());
     [

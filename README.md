@@ -31,6 +31,7 @@ noren merges your **running zellij sessions**, **[zoxide](https://github.com/aje
 - **Layout previews without resurrection** — the pane layout drawn as box art (focused pane highlighted, running programs labeled), rendered *only* from zellij's serialized layout cache. Exited sessions are never contacted, so hovering one can never wake it.
 - **Attached indicator** — ▣ marks sessions currently shown in a terminal, ▢ ones running in the background.
 - **Pinning** — pin sessions (shared, name-based) and folders (separate, path-based); pinned rows float to the prompt.
+- **Tab menu** — `Alt t` lists a session's tabs (live preview per tab, the active one marked ●); `Enter` takes you straight into that tab, from inside zellij or a fresh terminal.
 - **Snapshots** — point-in-time backups of a session's layout + running commands. `Ctrl s` opens a session's snapshot menu: take one, preview any of the last N, restore or delete it. Optionally automatic for pinned sessions.
 - **Project rules** — `[[session]]` entries and `[[wildcard]]` globs assign layouts, startup commands, and preview commands per project; `noren resolve` exposes the same resolver to shell scripts (e.g. an autostart hook).
 - **Discard** — "close tab" for sessions: switch back to your previous session, then soft-kill the one you left.
@@ -101,6 +102,7 @@ noren resolve <target> [--format env|json]
 | `Alt h` | show hidden entries (marked ⊘) in the list, or not |
 | `Ctrl e` | rename the selected running session (type the name, `Enter` applies, `Esc` cancels) |
 | `Alt p` | search names only (default) or names + paths |
+| `Alt t` | tab menu of the selected session — its tabs with a live preview each; `Enter` connects and lands in that tab, `Esc` back |
 | `Esc` | close (or cancel a pending confirmation) |
 
 `↩` marks the session `noren last` would jump back to. All binds are configurable under `[keys]`; the header inside the picker is generated from the active set and wraps to the pane width, so no bind is ever cut off. noren's binds override fzf's defaults inside its picker only (e.g. `Ctrl h`, which some terminals send for Backspace — rebind `hide` if yours does). Kill and delete ask `y/N` right in the prompt line when the `[confirm]` policy says so (default: kill asks if a terminal is attached, delete asks if the session is running); killing or deleting the session you are in switches you away first.
