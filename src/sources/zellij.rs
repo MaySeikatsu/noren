@@ -241,6 +241,7 @@ pub fn zellij_sessions(cfg: &Config) -> Vec<Row> {
                 state,
                 pinned,
                 icon: cfg.icon_for("zellij", state, pinned, attached),
+                hidden: false,
                 name,
             }
         })

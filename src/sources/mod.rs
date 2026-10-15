@@ -16,6 +16,9 @@ pub struct Row {
     pub state: &'static str, // live | exited | dir | config
     pub pinned: bool,
     pub icon: String,
+    /// Hidden by the user (^h) or the config blacklist; only listed when
+    /// hidden entries are shown.
+    pub hidden: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -23,8 +26,11 @@ pub struct Selection {
     pub zellij: bool,
     pub zoxide: bool,
     pub config: bool,
-    /// true INVERTS the blacklist: show only blacklisted entries.
+    /// true INVERTS the blacklist: show only hidden/blacklisted entries.
     pub blacklisted: bool,
+    /// Also list hidden/blacklisted entries (marked ⊘) — the picker's
+    /// "show hidden" toggle.
+    pub show_hidden: bool,
 }
 
 impl Selection {
@@ -34,6 +40,7 @@ impl Selection {
             zoxide: true,
             config: true,
             blacklisted: false,
+            show_hidden: false,
         }
     }
 }
@@ -46,24 +53,28 @@ pub fn parse_source(word: &str) -> Selection {
             zoxide: false,
             config: false,
             blacklisted: false,
+            show_hidden: false,
         },
         "zoxide" | "dirs" => Selection {
             zellij: false,
             zoxide: true,
             config: false,
             blacklisted: false,
+            show_hidden: false,
         },
         "config" | "c" => Selection {
             zellij: false,
             zoxide: false,
             config: true,
             blacklisted: false,
+            show_hidden: false,
         },
-        "blacklist" | "blacklisted" | "b" => Selection {
+        "blacklist" | "blacklisted" | "b" | "hidden" => Selection {
             zellij: true,
             zoxide: true,
             config: true,
             blacklisted: true,
+            show_hidden: false,
         },
         _ => Selection::all(),
     }
@@ -80,6 +91,7 @@ fn separator_row() -> Row {
         state: "sep",
         pinned: false,
         icon: String::new(),
+        hidden: false,
     }
 }
 
@@ -187,6 +199,36 @@ pub fn dedupe(rows: Vec<Row>, cfg: &Config) -> Vec<Row> {
         .collect()
 }
 
+/// The identity a hidden-entries line uses for a row (see state.rs).
+pub fn hidden_key(r: &Row) -> Option<String> {
+    match r.source {
+        "zellij" if !r.name.is_empty() => Some(format!("session\t{}", r.name)),
+        "config" if !r.name.is_empty() => Some(format!("config\t{}", r.name)),
+        "zoxide" if !r.path.is_empty() => Some(format!("dir\t{}", path_key(&r.path))),
+        _ => None,
+    }
+}
+
+/// Is the row hidden by the config blacklist (as opposed to ^h)?
+pub fn blacklisted(cfg: &Config, r: &Row) -> bool {
+    is_blacklisted(r, &blacklist_patterns(cfg), &cfg.blacklist)
+}
+
+/// Path-like entries are expanded once; bare words stay as written (no
+/// cwd join) and only match dirs as globs, e.g. "**/scratch".
+fn blacklist_patterns(cfg: &Config) -> Vec<String> {
+    cfg.blacklist
+        .iter()
+        .map(|b| {
+            if b.starts_with('/') || b.starts_with('~') {
+                path_key(b)
+            } else {
+                b.clone()
+            }
+        })
+        .collect()
+}
+
 /// Blacklist match. Sessions and config rows match by name; dirs only by
 /// path — an entry equal to the path (`~` expanded) or matching it as a
 /// glob (`*`/`**`/`?`, same as [[wildcard]]), never by basename.
@@ -216,22 +258,19 @@ pub fn collect(cfg: &Config, sel: Selection) -> Vec<Row> {
     sort_rows(&mut rows, cfg);
     let deduped = dedupe(rows, cfg);
 
-    // Path-like entries are expanded once; bare words stay as written (no
-    // cwd join) and only match dirs as globs, e.g. "**/scratch".
-    let bl = &cfg.blacklist;
-    let patterns: Vec<String> = bl
-        .iter()
-        .map(|b| {
-            if b.starts_with('/') || b.starts_with('~') {
-                path_key(b)
-            } else {
-                b.clone()
-            }
-        })
-        .collect();
+    // Hidden = config blacklist or ^h. Applied after dedupe, so hiding a
+    // session doesn't resurface the folder it claimed.
+    let patterns = blacklist_patterns(cfg);
+    let user_hidden: std::collections::HashSet<String> =
+        crate::state::read_hidden().into_iter().collect();
     let mut rows: Vec<Row> = deduped
         .into_iter()
-        .filter(|r| is_blacklisted(r, &patterns, bl) == sel.blacklisted)
+        .map(|mut r| {
+            r.hidden = is_blacklisted(&r, &patterns, &cfg.blacklist)
+                || hidden_key(&r).is_some_and(|k| user_hidden.contains(&k));
+            r
+        })
+        .filter(|r| sel.show_hidden || r.hidden == sel.blacklisted)
         .collect();
 
     if cfg.separator {
@@ -259,8 +298,18 @@ const NAME_PAD_MAX: usize = 28;
 fn display(r: &Row, show_paths: bool, pad: usize, icon_w: usize) -> String {
     let name = r.name.replace('\t', " ");
     // Icons are right-aligned so names (and paths) start in one column.
-    let indent = icon_w.saturating_sub(cell_width(&r.icon));
-    let mut out = format!("{:indent$}{}{name}", "", r.icon);
+    // Hidden rows (only listed with "show hidden") read as ghosts: ⊘ in
+    // the icon column, dim italic name.
+    let (icon, styled) = if r.hidden {
+        (
+            if r.icon.is_empty() { "" } else { "⊘ " }.to_string(),
+            format!("\x1b[2;3m{name}\x1b[0m"),
+        )
+    } else {
+        (r.icon.clone(), name.clone())
+    };
+    let indent = icon_w.saturating_sub(cell_width(&icon));
+    let mut out = format!("{:indent$}{icon}{styled}", "");
     if show_paths && !r.path.is_empty() {
         let fill = pad.saturating_sub(name.chars().count());
         let path = tilde_path(&r.path).replace('\t', " ");
@@ -312,7 +361,10 @@ pub fn rows_to_tsv(rows: &[Row], cfg: &Config) -> String {
 
 /// `noren list <word>` — print rows for the selected source(s).
 pub fn list_cmd(cfg: &Config, word: &str) {
-    let rows = collect(cfg, parse_source(word));
+    let mut sel = parse_source(word);
+    // Inside the picker, its "show hidden" toggle applies to every reload.
+    sel.show_hidden = crate::picker::showing_hidden();
+    let rows = collect(cfg, sel);
     println!("{}", rows_to_tsv(&rows, cfg));
 }
 
@@ -328,6 +380,7 @@ mod tests {
             state: "live",
             pinned,
             icon: String::new(),
+            hidden: false,
         }
     }
 

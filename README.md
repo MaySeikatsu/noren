@@ -68,7 +68,7 @@ noren <name-or-path>               connect shorthand (sesh-style)
 noren connect <name-or-path>       attach / create / resurrect / switch
 noren last                         jump back to the previous session
 noren root [path]                  connect to the git top-level session
-noren list [zellij|zoxide|config|all|blacklist]
+noren list [zellij|zoxide|config|all|hidden]
 noren kill <name> [--yes]          soft kill (layout survives; asks if attached)
 noren delete <name> [--yes]        hard delete (asks if running)
 noren discard [name]               switch to previous session, then soft-kill
@@ -97,9 +97,11 @@ noren resolve <target> [--format env|json]
 | `Ctrl d` | hard-delete the selected session |
 | `Ctrl /` | show / hide the preview |
 | `Ctrl l` | session previews: live screen ↔ saved layout |
+| `Ctrl h` | hide / unhide the selected session, folder or config entry |
+| `Alt h` | show hidden entries (marked ⊘) in the list, or not |
 | `Esc` | close (or cancel a pending confirmation) |
 
-All binds are configurable under `[keys]`; the header inside the picker is generated from the active set. Kill and delete ask `y/N` right in the prompt line when the `[confirm]` policy says so (default: kill asks if a terminal is attached, delete asks if the session is running); killing or deleting the session you are in switches you away first.
+All binds are configurable under `[keys]`; the header inside the picker is generated from the active set and wraps to the pane width, so no bind is ever cut off. noren's binds override fzf's defaults inside its picker only (e.g. `Ctrl h`, which some terminals send for Backspace — rebind `hide` if yours does). Kill and delete ask `y/N` right in the prompt line when the `[confirm]` policy says so (default: kill asks if a terminal is attached, delete asks if the session is running); killing or deleting the session you are in switches you away first.
 
 ## Configuration
 
