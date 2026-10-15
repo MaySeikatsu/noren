@@ -14,7 +14,10 @@ use std::process::Command;
 
 use crate::config::Config;
 use crate::connect::{inside_zellij, switch_in_place};
-use crate::sources::zellij::{cached_layout_file, zellij_sessions};
+use crate::sources::zellij::{
+    action_output_with_timeout, cached_layout_file, create_background, session_state,
+    wait_for_session,
+};
 use crate::state::record_last;
 
 fn session_dir(name: &str) -> PathBuf {
@@ -74,14 +77,17 @@ fn prune(name: &str, keep: usize) {
     }
 }
 
-fn is_live(cfg: &Config, name: &str) -> bool {
-    zellij_sessions(cfg)
-        .iter()
-        .any(|r| r.name == name && r.state == "live")
+/// Kill-timeout for `dump-layout` (it sits on the connect path when
+/// `auto_snapshot_pinned` is on; a session dying mid-call hangs it forever).
+const DUMP_TIMEOUT_MS: u64 = 2000;
+
+// Cheap `list-sessions` parse — no attached-client round trips.
+fn is_live(name: &str) -> bool {
+    session_state(name) == Some("live")
 }
 
-fn session_exists(cfg: &Config, name: &str) -> bool {
-    zellij_sessions(cfg).iter().any(|r| r.name == name)
+fn session_exists(name: &str) -> bool {
+    session_state(name).is_some()
 }
 
 /// Capture the session's serialized layout. Returns the newest existing
@@ -89,14 +95,10 @@ fn session_exists(cfg: &Config, name: &str) -> bool {
 /// piling up identical copies).
 pub fn take_snapshot(cfg: &Config, name: &str) -> anyhow::Result<PathBuf> {
     let mut body = String::new();
-    if is_live(cfg, name)
-        && let Ok(out) = Command::new("zellij")
-            .env("ZELLIJ_SESSION_NAME", name)
-            .args(["action", "dump-layout"])
-            .output()
-        && out.status.success()
+    if is_live(name)
+        && let Some(out) = action_output_with_timeout(name, &["dump-layout"], DUMP_TIMEOUT_MS)
     {
-        body = String::from_utf8_lossy(&out.stdout).into_owned();
+        body = out;
     }
     if body.trim().is_empty() {
         body = fs::read_to_string(cached_layout_file(name)).unwrap_or_default();
@@ -187,7 +189,7 @@ pub fn restore_cmd(cfg: &Config, name: &str, index: usize, force: bool) -> anyho
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
 
-    let exists = session_exists(cfg, name);
+    let exists = session_exists(name);
     if exists && !force && std::io::stdin().is_terminal() {
         print!("Replace session \"{name}\" with snapshot {stem}? [y/N] ");
         std::io::stdout().flush().ok();
@@ -202,25 +204,24 @@ pub fn restore_cmd(cfg: &Config, name: &str, index: usize, force: bool) -> anyho
     if exists {
         // Preserve the pre-restore state as its own snapshot (best effort).
         let _ = take_snapshot(cfg, name);
-        if is_live(cfg, name) {
+        if is_live(name) {
             let _ = Command::new("zellij").args(["kill-session", name]).status();
         }
         let _ = Command::new("zellij")
             .args(["delete-session", "--force", name])
             .status();
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        // Recreating under a name zellij still lists would attach to the
+        // old incarnation — wait until it's gone.
+        wait_for_session(name, false);
     }
 
     record_last(name);
     if inside_zellij() {
-        let _ = Command::new("zellij")
-            .args(["--session", name, "--new-session-with-layout"])
-            .arg(&snap)
-            .args(["--", "true"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-        std::thread::sleep(std::time::Duration::from_millis(300));
+        // Background-create from the snapshot, then switch. Without this the
+        // switch below would create an empty default session instead.
+        if !create_background(name, Some(&snap), None) {
+            anyhow::bail!("zellij did not create \"{name}\" from snapshot {stem}");
+        }
         switch_in_place(name)?;
         println!("restored: {name} <- {stem}");
         Ok(())
