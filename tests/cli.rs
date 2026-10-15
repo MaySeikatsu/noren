@@ -406,7 +406,10 @@ fn malformed_config_warns_and_uses_defaults() {
     .unwrap();
     let (out, err, ok) = env.run(&["list", "zoxide"]);
     assert!(ok);
-    assert!(err.contains("warning"));
+    // The error names the file and position, and says what happens.
+    assert!(err.contains("config error in"), "stderr: {err}");
+    assert!(err.contains("line 1"), "stderr: {err}");
+    assert!(err.contains("using defaults"), "stderr: {err}");
     assert!(out.contains("/tmp/x"));
 }
 
