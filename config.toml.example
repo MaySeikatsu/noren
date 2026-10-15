@@ -86,6 +86,11 @@ icons = true
 # names and folders that share a basename. Default: true.
 show_paths = true
 
+# Session tab names in the list: "off", "column" (own column between name
+# and path: `nixos  (nixos, claude, nvim)  ~/.config/nixos`) or "inline"
+# (right behind the name). Default: "off".
+show_tabs = "off"
+
 # ▣/▢ distinction (detecting attached terminals) costs one parallel
 # `zellij action list-clients` round trip (~150-250ms) at picker startup.
 # Set false for the instant (~20ms) list; live sessions then all show ▢.

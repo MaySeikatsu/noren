@@ -19,6 +19,8 @@ pub struct Row {
     /// Hidden by the user (^h) or the config blacklist; only listed when
     /// hidden entries are shown.
     pub hidden: bool,
+    /// Tab names (sessions, with show_tabs on), in tab order.
+    pub tabs: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -92,6 +94,7 @@ fn separator_row() -> Row {
         pinned: false,
         icon: String::new(),
         hidden: false,
+        tabs: vec![],
     }
 }
 
@@ -295,11 +298,40 @@ const NAME_PAD_MAX: usize = 28;
 /// name padded to `pad` and the dimmed `~`-abbreviated path as field 6.
 /// The picker shows fields 5,6 (tabstop 1) but matches field 5 only, so
 /// typing never scrolls a row sideways to a hit buried in its path.
-fn display(r: &Row, show_paths: bool, pad: usize, icon_w: usize, last: &str) -> String {
+/// Longest tab list shown before it's cut with "…".
+const TABS_MAX: usize = 36;
+
+/// "(nixos, claude, nvim)" for a session's tabs, capped at TABS_MAX.
+fn tabs_text(r: &Row) -> String {
+    if r.tabs.is_empty() {
+        return String::new();
+    }
+    let full = format!("({})", r.tabs.join(", ").replace('\t', " "));
+    if full.chars().count() <= TABS_MAX {
+        full
+    } else {
+        let cut: String = full.chars().take(TABS_MAX - 2).collect();
+        format!("{cut}…)")
+    }
+}
+
+/// Column layout shared by all rows of one listing.
+struct Layout<'a> {
+    show_paths: bool,
+    /// show_tabs = "inline": tabs right behind the name (field 5).
+    inline_tabs: bool,
+    /// show_tabs = "column": width of the tab column in field 6 (0 = none).
+    tabs_col: usize,
+    /// Name column width (field 5 padding before field 6).
+    pad: usize,
+    icon_w: usize,
+    last: &'a str,
+}
+
+fn display(r: &Row, l: &Layout) -> String {
     let name = r.name.replace('\t', " ");
     // ↩ marks where `noren last` (alt-tab) would go.
-    let is_last = r.source == "zellij" && !last.is_empty() && r.name == last;
-    let marker_w = if is_last { 2 } else { 0 };
+    let is_last = r.source == "zellij" && !l.last.is_empty() && r.name == l.last;
     // Icons are right-aligned so names (and paths) start in one column.
     // Hidden rows (only listed with "show hidden") read as ghosts: ⊘ in
     // the icon column, dim italic name.
@@ -311,15 +343,35 @@ fn display(r: &Row, show_paths: bool, pad: usize, icon_w: usize, last: &str) -> 
     } else {
         (r.icon.clone(), name.clone())
     };
+    let mut name_w = name.chars().count();
     if is_last {
         styled.push_str(" \x1b[2m↩\x1b[0m");
+        name_w += 2;
     }
-    let indent = icon_w.saturating_sub(cell_width(&icon));
+    let tabs = tabs_text(r);
+    if l.inline_tabs && !tabs.is_empty() {
+        styled.push_str(&format!(" \x1b[2m{tabs}\x1b[0m"));
+        name_w += 1 + tabs.chars().count();
+    }
+    let indent = l.icon_w.saturating_sub(cell_width(&icon));
     let mut out = format!("{:indent$}{icon}{styled}", "");
-    if show_paths && !r.path.is_empty() {
-        let fill = pad.saturating_sub(name.chars().count() + marker_w);
-        let path = tilde_path(&r.path).replace('\t', " ");
-        out.push_str(&format!("{:fill$} \t\x1b[2m{path}\x1b[0m", ""));
+
+    // Field 6 (display only, searched with alt-p): tab column, then path.
+    let path = (l.show_paths && !r.path.is_empty()).then(|| tilde_path(&r.path).replace('\t', " "));
+    let mut f6 = String::new();
+    if l.tabs_col > 0 && (path.is_some() || !tabs.is_empty()) {
+        let gap = l.tabs_col - tabs.chars().count();
+        f6.push_str(&format!("\x1b[2m{tabs}\x1b[0m{:gap$}", ""));
+        if path.is_some() {
+            f6.push_str("  ");
+        }
+    }
+    if let Some(p) = &path {
+        f6.push_str(&format!("\x1b[2m{p}\x1b[0m"));
+    }
+    if !f6.is_empty() {
+        let fill = l.pad.saturating_sub(name_w);
+        out.push_str(&format!("{:fill$} \t{f6}", ""));
     }
     out
 }
@@ -335,19 +387,33 @@ fn cell_width(s: &str) -> usize {
 /// TSV columns: source, name, path, state, display.
 pub fn rows_to_tsv(rows: &[Row], cfg: &Config) -> String {
     let last = crate::state::read_last();
-    let icon_w = rows
-        .iter()
-        .filter(|r| r.source != "sep")
-        .map(|r| cell_width(&r.icon))
-        .max()
-        .unwrap_or(0);
-    let pad = rows
-        .iter()
-        .filter(|r| r.source != "sep")
-        .map(|r| r.name.chars().count())
-        .max()
-        .unwrap_or(0)
-        .min(NAME_PAD_MAX);
+    let listed = || rows.iter().filter(|r| r.source != "sep");
+    let inline_tabs = cfg.show_tabs == "inline";
+    let tabs_col = if cfg.show_tabs == "column" {
+        listed()
+            .map(|r| tabs_text(r).chars().count())
+            .max()
+            .unwrap_or(0)
+    } else {
+        0
+    };
+    let name_w = |r: &Row| {
+        let t = tabs_text(r).chars().count();
+        r.name.chars().count() + if inline_tabs && t > 0 { 1 + t } else { 0 }
+    };
+    let cap = if inline_tabs {
+        NAME_PAD_MAX + TABS_MAX
+    } else {
+        NAME_PAD_MAX
+    };
+    let layout = Layout {
+        show_paths: cfg.show_paths,
+        inline_tabs,
+        tabs_col,
+        pad: listed().map(name_w).max().unwrap_or(0).min(cap),
+        icon_w: listed().map(|r| cell_width(&r.icon)).max().unwrap_or(0),
+        last: &last,
+    };
     rows.iter()
         .map(|r| {
             if r.source == "sep" {
@@ -359,7 +425,7 @@ pub fn rows_to_tsv(rows: &[Row], cfg: &Config) -> String {
                 r.name,
                 r.path,
                 r.state,
-                display(r, cfg.show_paths, pad, icon_w, &last)
+                display(r, &layout)
             )
         })
         .collect::<Vec<_>>()
@@ -388,6 +454,7 @@ mod tests {
             pinned,
             icon: String::new(),
             hidden: false,
+            tabs: vec![],
         }
     }
 
@@ -614,18 +681,84 @@ mod tests {
         );
     }
 
+    fn plain_layout(pad: usize, last: &str) -> Layout<'_> {
+        Layout {
+            show_paths: true,
+            inline_tabs: false,
+            tabs_col: 0,
+            pad,
+            icon_w: 0,
+            last,
+        }
+    }
+
+    fn with_tabs(name: &str, path: &str, tabs: &[&str]) -> Row {
+        Row {
+            tabs: tabs.iter().map(|t| t.to_string()).collect(),
+            ..at("zellij", name, path)
+        }
+    }
+
+    #[test]
+    fn tabs_column_sits_between_name_and_path_and_aligns() {
+        let cfg = Config {
+            show_tabs: "column".into(),
+            ..Config::default()
+        };
+        let rows = vec![
+            with_tabs("nixos", "/n", &["nixos", "claude", "nvim"]),
+            at("zoxide", "proj", "/p"),
+        ];
+        let tsv = rows_to_tsv(&rows, &cfg);
+        let f: Vec<Vec<&str>> = tsv.lines().map(|l| l.split('\t').collect()).collect();
+        assert_eq!(
+            f[0][5],
+            "\x1b[2m(nixos, claude, nvim)\x1b[0m  \x1b[2m/n\x1b[0m"
+        );
+        // The folder gets an empty tab cell of the same width.
+        assert_eq!(
+            f[1][5],
+            format!("\x1b[2m\x1b[0m{}  \x1b[2m/p\x1b[0m", " ".repeat(21))
+        );
+        // Names stay searchable alone (field 5 has no tabs).
+        assert!(!f[0][4].contains("claude"));
+    }
+
+    #[test]
+    fn tabs_inline_follow_the_name_and_long_lists_are_cut() {
+        let cfg = Config {
+            show_tabs: "inline".into(),
+            ..Config::default()
+        };
+        let many: Vec<String> = (0..20).map(|i| format!("tab{i}")).collect();
+        let many: Vec<&str> = many.iter().map(String::as_str).collect();
+        let rows = vec![
+            with_tabs("nixos", "/n", &["a", "b"]),
+            with_tabs("big", "/b", &many),
+        ];
+        let tsv = rows_to_tsv(&rows, &cfg);
+        let first = tsv.lines().next().unwrap();
+        assert!(first.contains("nixos \x1b[2m(a, b)\x1b[0m"), "{first:?}");
+        let second = tsv.lines().nth(1).unwrap();
+        assert!(second.contains("…)"), "{second:?}");
+        assert!(tabs_text(&rows[1]).chars().count() <= TABS_MAX);
+        // Off by default: no tabs anywhere.
+        let off = rows_to_tsv(&rows, &Config::default());
+        assert!(!off.contains("(a, b)"));
+    }
+
     #[test]
     fn last_session_is_marked_and_stays_aligned() {
         let r = at("zellij", "ab", "/p");
-        let d = display(&r, true, 6, 0, "ab");
+        let d = display(&r, &plain_layout(6, "ab"));
         assert_eq!(d, "ab \x1b[2m↩\x1b[0m   \t\x1b[2m/p\x1b[0m");
         // Same column as an unmarked name of the same length.
         assert_eq!(
-            display(&r, true, 6, 0, "other"),
+            display(&r, &plain_layout(6, "other")),
             "ab     \t\x1b[2m/p\x1b[0m"
         );
         // Folders never carry it, even with a matching name.
-        assert!(!display(&at("zoxide", "ab", "/p"), true, 6, 0, "ab").contains('↩'));
+        assert!(!display(&at("zoxide", "ab", "/p"), &plain_layout(6, "ab")).contains('↩'));
     }
 
     #[test]
@@ -653,7 +786,7 @@ mod tests {
         // Over the cap: just the two-space gap.
         assert_eq!(displays[3], format!("{long} \t\x1b[2m/l\x1b[0m"));
         // Tabs never leak into the display field (stays the 5th column).
-        let d = display(&at("zoxide", "ta\tb", "/t\tb"), true, 0, 0, "");
+        let d = display(&at("zoxide", "ta\tb", "/t\tb"), &plain_layout(0, ""));
         assert_eq!(d, "ta b \t\x1b[2m/t b\x1b[0m");
     }
 }

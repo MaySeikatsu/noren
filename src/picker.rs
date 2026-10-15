@@ -1150,6 +1150,7 @@ fn hide(cfg: &Config, exe: &str, line: &str) -> String {
         pinned: false,
         icon: String::new(),
         hidden: false,
+        tabs: vec![],
     };
     let Some(key) = crate::sources::hidden_key(&r) else {
         return ghost("✗ only sessions, folders and config entries can be hidden");
