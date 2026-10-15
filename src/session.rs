@@ -56,46 +56,62 @@ pub fn pin_row(cfg: &Config, line: &str) {
     }
 }
 
-/// `noren rename <new>` — rename the current session, carrying the pin,
-/// `last`/`previous` history and snapshots over. zellij itself moves the
-/// resurrection cache dir (verified on 0.45.1), so connect-by-name keeps
-/// working under the new name.
+/// `noren rename <new>` — rename the current session.
 pub fn rename_current(new: &str) {
     let old = current_session();
     if old.is_empty() {
         eprintln!("noren rename: not inside a zellij session");
         std::process::exit(1);
     }
-    if new.is_empty() || new == old {
-        eprintln!("noren rename: new name must differ from current");
-        std::process::exit(1);
-    }
-    // Sanitize to match zellij-autostart's rules; keep the raw name if the
-    // sanitized form is empty.
-    let sanitized = sanitize_core(new);
-    let target = if sanitized.is_empty() {
-        new.to_string()
-    } else {
-        sanitized
-    };
-
-    let status = Command::new("zellij")
-        .args(["action", "rename-session", &target])
-        .status();
-    match status {
-        Ok(s) if s.success() => {}
-        _ => {
-            eprintln!("noren rename: zellij action rename-session failed");
+    match rename_session(&old, new) {
+        Ok(target) => println!("renamed: {old} -> {target}"),
+        Err(e) => {
+            eprintln!("noren rename: {e}");
             std::process::exit(1);
         }
     }
+}
 
-    if state::is_pinned(&old) {
-        state::pin_remove(&old);
+/// Rename a RUNNING session (zellij can't rename exited ones) and carry
+/// noren's state along: pin, `last` history, snapshots, hidden flag.
+/// Returns the sanitized new name.
+pub fn rename_session(old: &str, new: &str) -> anyhow::Result<String> {
+    // Sanitize to match zellij-autostart's rules; keep the raw name if the
+    // sanitized form is empty.
+    let sanitized = sanitize_core(new.trim());
+    let target = if sanitized.is_empty() {
+        new.trim().to_string()
+    } else {
+        sanitized
+    };
+    if target.is_empty() || target == old {
+        anyhow::bail!("the new name must differ from \"{old}\"");
+    }
+    let sessions = crate::sources::zellij::raw_sessions();
+    if sessions.iter().any(|(n, _)| *n == target) {
+        anyhow::bail!("a session named \"{target}\" already exists");
+    }
+    if !sessions.iter().any(|(n, s)| n == old && *s == "live") {
+        anyhow::bail!("only running sessions can be renamed (\"{old}\" isn't)");
+    }
+
+    let mut cmd = Command::new("zellij");
+    cmd.env("ZELLIJ_SESSION_NAME", old)
+        .args(["action", "rename-session", &target]);
+    match crate::sources::zellij::run_with_timeout(cmd, 2000) {
+        Some(o) if o.status.success() => {}
+        _ => anyhow::bail!("zellij action rename-session failed"),
+    }
+
+    if state::is_pinned(old) {
+        state::pin_remove(old);
         state::pin_add(&target);
     }
-    state::rename_in_history(&old, &target);
-    state::rename_snapshots(&old, &target);
-    state::write_current_session(&target);
-    println!("renamed: {old} -> {target}");
+    state::rename_in_history(old, &target);
+    state::rename_snapshots(old, &target);
+    state::rename_hidden(old, &target);
+    if current_session() == old {
+        state::write_current_session(&target);
+    }
+    Ok(target)
 }

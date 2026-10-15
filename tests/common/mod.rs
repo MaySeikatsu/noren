@@ -21,11 +21,17 @@ impl Env {
         let bin = tmp.path().join("bin");
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(&bin).unwrap();
-        Env {
+        let env = Env {
             home,
             bin,
             _tmp: tmp,
-        }
+        };
+        // Never reach the developer's real zellij/zoxide: no sessions, no
+        // dirs unless a test stubs them (an unknown ZELLIJ_SESSION_NAME
+        // makes `zellij action` target whatever session is running).
+        env.stub("zellij", "exit 0");
+        env.stub("zoxide", "exit 0");
+        env
     }
 
     pub fn stub(&self, name: &str, script: &str) {
