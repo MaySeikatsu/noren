@@ -13,16 +13,16 @@ A *noren* is the fabric curtain hanging in the doorway of a Japanese shop — yo
 
 noren merges your **running zellij sessions**, **[zoxide](https://github.com/ajeetdsouza/zoxide) directories**, and **configured project entries** into a single [fzf](https://github.com/junegunn/fzf) picker, and connects to whatever you choose — attaching, creating, resurrecting, or switching in place as appropriate. Feature parity with [sesh](https://github.com/joshmedeski/sesh) (tmux), plus a few things sesh doesn't have.
 ```
-   📁 rust/tutorials   ~/Projects/rust/tutorials                  ╭────── preview · ● live ──────╮
-   ⚙ dotfiles          ~/dotfiles                                 │ ● code · hx · ~/.config/nixos│
-   ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌                                             │  notes   code   logs         │
-   ⊗ old-experiment    ~/Projects/old                             │ fn main() {                  │
-   ▣ projects ↩        ~/Projects                                 │     println!("hi");          │
-   📌 ▢ quickshell     ~/.config/quickshell                       │ }                            │
-   📌 ▣ nixos          ~/.config/nixos                            │ :w                           │
-  ^t sessions  ^z dirs  ^a all  ^r reload  ^/ preview    f1 more  │                              │
-  ^p pin  ^e rename  ^k kill  ^d delete  ⏎ connect  esc close     │                              │
-⚡  nix▏                                                          ╰──────────────────────────────╯
+   📁 rust/tutorials   ~/Projects/rust/tutorials            ╭──── preview · ● live · all tabs ─────╮
+   ⚙ dotfiles          ~/dotfiles                           │ ● 2 tabs · nixos                     │
+   ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌                                       │ ● code           ┃   rebuild         │
+   ⊗ old-experiment    ~/Projects/old                       │fn main() {       ┃building…          │
+   ▣ projects ↩        ~/Projects                           │    rebuild();    ┃copying path       │
+   📌 ▢ quickshell (bar, logs)  ~/.config/quickshell        │}                 ┃done.              │
+   📌 ▣ nixos (code, rebuild)   ~/.config/nixos             │:w                ┃$                  │
+                                                            │                  ┃                   │
+  ^t sessions  ^z dirs  ^w tabs  ⏎ connect     f1 more      │                                      │
+⚡  nix▏                                                    ╰──────────────────────────────────────╯
 ```
 
 📌 pinned · ▣ open in a terminal right now · ▢ running in the background · ⊗ exited (resurrectable) · ⚙ config entry · 📁 zoxide folder · ↩ where `noren last` jumps back to.
@@ -31,27 +31,27 @@ noren merges your **running zellij sessions**, **[zoxide](https://github.com/aje
 
 **Finding things**
 - **One picker, three sources** — live/exited sessions, zoxide dirs, `[[session]]` config entries; deduplicated by identity (sessions by name, folders by path), sorted so the most relevant row sits next to the prompt, with a dim hairline between sessions and folders.
-- **Fuzzy ranking on names** — typing ranks matches, best next to the prompt; `Alt p` searches paths too. Each row shows its path dimmed; `show_tabs` adds the session's tab names.
+- **Fuzzy ranking on names** — typing ranks matches, best next to the prompt; `Alt p` searches paths too. Each row shows its path dimmed; the session's tab names follow the name (`show_tabs`).
 - **Typed paths & new sessions** — no match + `Enter` creates a session named after the query; a path (`~/x`, `/x`, `./x`) opens that folder, offering to create it first.
 - **Hide entries** — `Ctrl h` hides a session, folder or config entry; `Alt h` shows hidden ones (⊘) to unhide them. For permanent rules (`**/node_modules`, `/nix/store/**`) use `blacklist` in the config.
 - **Stays current** — the list re-lists itself every minute while open (`auto_reload_secs`), keeping the cursor on its entry.
 
 **Seeing what's there**
-- **Live previews** — a running session's preview shows what its focused pane displays *right now*, refreshed every second; optionally all tabs side by side (`live_all_tabs`). `Ctrl /` cycles live → layout → text → off, and the preview's title always says what it shows (`● live`, `▦ layout — session not running`, …).
+- **Live previews** — a running session's preview shows *right now* what all its tabs display, side by side (or just the active tab), refreshed every second. `Ctrl /` cycles all tabs → active tab → layout → text → off (or, with `preview_toggle = "separate"`, only shows/hides while `Ctrl l` cycles the style). The preview's title always says what it shows (`● live · all tabs`, `▦ layout — session not running`, …), and its background is a shade off the terminal's so picker and preview read as two areas.
 - **Layout previews without resurrection** — the pane layout drawn as box art (focused pane highlighted, running programs labeled), rendered *only* from zellij's saved layout. Exited sessions are never contacted, so hovering one can never wake it.
 - **Attached indicator** — ▣ marks sessions shown in a terminal right now, ▢ ones running in the background.
 
 **Acting on it**
 - **Session-aware connect** — inside zellij it switches your client in place (via the [zellij-switch](https://github.com/mostafaqanbaryan/zellij-switch) plugin — never nested attaches); outside it execs `zellij attach --create`. `Alt Enter` opens the selection in a new terminal window instead.
 - **Kill, delete, rename, pin — from the picker** — inline `y/N` confirmations right in the prompt (configurable per action), rename with the name prefilled; killing the session you're in switches you away first.
-- **Tab menu** — `Alt t` lists a session's tabs (live preview of each, the active one marked ●); `Enter` takes you straight into that tab, from inside zellij or a fresh terminal.
+- **Tab menu** — `Ctrl w` lists a session's tabs (live preview of each, the active one marked ●); `Enter` takes you straight into that tab, from inside zellij or a fresh terminal.
 - **Snapshots** — point-in-time backups of a session's layout + running commands. `Ctrl s` opens a session's snapshot menu: take one, preview any of the last N, restore or delete it. Optionally automatic for pinned sessions.
 - **Alt-tab for sessions** — `noren last` toggles current ↔ previous in place; bound to `Alt Shift Tab` it feels like window switching (see [docs/integration.md](docs/integration.md)).
 - **Discard** — "close tab" for sessions: switch back to your previous session, then soft-kill the one you left.
 - **Project rules** — `[[session]]` entries and `[[wildcard]]` globs assign layouts, startup commands, and preview commands per project; `noren resolve` exposes the same resolver to shell scripts (e.g. an autostart hook).
 
 **Under the hood**
-- **Configurable everything** — every key under `[keys]`; a compact two-line key overview (`header_lines`) with `F1` for the full list; config problems are shown with line and column.
+- **Configurable everything** — every key under `[keys]`; a compact one-line key overview (`header_lines`) with `F1` for the full list of every bind; config problems are shown with line and column.
 - **Fast** — a single sync Rust binary (7 crates, no TUI framework, no async runtime); `list` in ~20 ms (~250 ms with the attached indicator).
 - **Shell completions** — fish/zsh/bash/nushell, with live session-name completion.
 
@@ -114,12 +114,13 @@ The overview above the prompt shows the main keys; `F1` toggles the full list.
 | `Ctrl t` / `Ctrl z` / `Ctrl a` | view: sessions / folders / all |
 | `Ctrl f` | view: `[[session]]` entries from the config (listed only if you have some) |
 | `Ctrl r` | reload the current view |
-| `Ctrl /` | cycle the preview: live → layout → text → off |
+| `Ctrl /` | cycle the preview: all tabs → active tab → layout → text → off |
+| `Ctrl l` | cycle the preview style only (with `preview_toggle = "separate"`, `Ctrl /` just shows/hides) |
 | `Ctrl p` | pin / unpin (sessions by name, folders by path) |
 | `Ctrl e` | rename the selected running session (`Enter` applies, `Esc` cancels) |
 | `Ctrl k` | soft-kill (layout survives, resurrectable) |
 | `Ctrl d` | hard-delete (removes the saved layout) |
-| `Alt t` | tab menu of the session: its tabs with a live preview each; `Enter` lands in that tab, `Esc` back |
+| `Ctrl w` | tab menu of the session: its tabs with a live preview each; `Enter` lands in that tab, `Esc` back |
 | `Ctrl s` | snapshot menu: `Enter` restore, `Ctrl s` take one, `Ctrl d` delete, `Esc` back |
 | `Ctrl h` | hide / unhide the selected entry |
 | `Alt h` | show hidden entries (⊘) or not |
@@ -137,16 +138,18 @@ sort_order    = ["zellij", "config", "zoxide"]   # first group = closest to the 
 session_order = ["pinned", "live", "exited"]
 separator     = true          # hairline between sessions and folders
 show_paths    = true          # dimmed path after each name
-show_tabs     = "off"         # "column" / "inline": session tab names in the list
+show_tabs     = "inline"      # session tab names behind the name; "column" / "off"
 blacklist     = ["/nix/store/**", "**/node_modules"]   # names, paths or globs
 
 preview_mode  = "live"        # live screen of running sessions; or "visual" / "text"
-live_all_tabs = false         # live preview of every tab side by side
+live_all_tabs = true          # live preview of every tab side by side
+preview_toggle = "combined"   # or "separate": ^/ shows/hides, ^l cycles the style
+preview_tint  = true          # preview background a shade off the terminal's
 live_refresh_ms  = 1000       # live preview refresh while you look
 auto_reload_secs = 60         # re-list while the picker is open (0 = off)
 preview_position         = "right"   # beside the list when roomy…
 preview_position_compact = "up"      # …above it when narrow
-header_lines  = 2             # compact key overview (F1 shows all)
+header_lines  = 1             # compact key overview (F1 shows all)
 terminal      = ""            # for Alt Enter; "" = $TERMINAL, or "foot", or "footclient {}"
 
 attached_indicator   = true   # ▣/▢ (costs ~200ms; false = instant list)

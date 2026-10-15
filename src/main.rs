@@ -13,6 +13,7 @@ mod sources;
 mod state;
 mod tabs;
 mod terminal;
+mod tint;
 mod util;
 mod window;
 

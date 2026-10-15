@@ -419,6 +419,18 @@ pub fn picker() -> anyhow::Result<()> {
     for b in fzf_binds(&cfg, &exe) {
         cmd.arg("--bind").arg(b);
     }
+    // Picker and preview as two areas: the preview a shade off the
+    // terminal's background (or preview_bg as given).
+    let preview_bg = if !cfg.preview_bg.trim().is_empty() {
+        Some(cfg.preview_bg.trim().to_string())
+    } else if cfg.preview_tint {
+        crate::tint::terminal_bg().map(crate::tint::shade)
+    } else {
+        None
+    };
+    if let Some(bg) = preview_bg {
+        cmd.arg("--color").arg(format!("preview-bg:{bg}"));
+    }
     // fzf's HTTP API: previews set their own label through it, and live
     // previews refresh on a timer. Unix socket paths max out at ~107 bytes;
     // go without rather than fail to start fzf in an exotic runtime dir.
