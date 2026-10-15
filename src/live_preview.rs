@@ -138,6 +138,38 @@ fn tail_lines(screen: &str, rows: usize) -> Vec<&str> {
 
 /// Header + tab strip + the pane's current screen, fitted to cols × rows.
 pub fn render_live(name: &str, cols: usize, rows: usize) -> Option<String> {
+    render_live_at(name, None, cols, rows)
+}
+
+/// Live view of one specific tab (0-based `position`; tab menu preview).
+pub fn render_live_tab(name: &str, position: usize, cols: usize, rows: usize) -> Option<String> {
+    render_live_at(name, Some(position), cols, rows)
+}
+
+/// A running session's tabs for the tab menu: 1-based position, name,
+/// active flag, focused tiled pane's title · cwd.
+pub fn tab_summaries(name: &str) -> Option<Vec<crate::tabs::TabInfo>> {
+    let mut tabs: Vec<Tab> = action_json(name, &["list-tabs", "-j", "-s"])?;
+    let panes: Vec<Pane> = action_json(name, &["list-panes", "-a", "-j"])?;
+    tabs.sort_by_key(|t| t.position);
+    Some(
+        tabs.into_iter()
+            .map(|t| {
+                let pane = pick_pane(&panes, t.position);
+                crate::tabs::TabInfo {
+                    position: t.position + 1,
+                    detail: pane.map_or_else(String::new, |p| {
+                        crate::tabs::detail(&p.title, p.pane_cwd.as_deref())
+                    }),
+                    active: t.active,
+                    name: t.name,
+                }
+            })
+            .collect(),
+    )
+}
+
+fn render_live_at(name: &str, want: Option<usize>, cols: usize, rows: usize) -> Option<String> {
     // `zellij action` with an unknown ZELLIJ_SESSION_NAME silently targets
     // whatever session is running (0.45.1) — make sure it's really ours and
     // really live (the list may be seconds old).
@@ -146,7 +178,10 @@ pub fn render_live(name: &str, cols: usize, rows: usize) -> Option<String> {
     }
     let tabs: Vec<Tab> = action_json(name, &["list-tabs", "-j", "-s"])?;
     let panes: Vec<Pane> = action_json(name, &["list-panes", "-a", "-j"])?;
-    let tab = pick_tab(name, &tabs)?;
+    let tab = match want {
+        Some(p) if tabs.iter().any(|t| t.position == p) => p,
+        _ => pick_tab(name, &tabs)?,
+    };
     let pane = pick_pane(&panes, tab)?;
     let screen = action_output_with_timeout(
         name,

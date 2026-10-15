@@ -729,6 +729,27 @@ pub fn render_session_visual(name: &str, cols: usize, rows: usize) -> Option<Str
     render_file_visual(&session_layout_file(name), cols, rows)
 }
 
+/// Tab names of a serialized layout, in order ("Tab #n" when unnamed).
+pub fn tab_names(src: &str) -> Vec<String> {
+    parse(src)
+        .iter()
+        .find(|n| n.name == "layout")
+        .map(|l| {
+            l.children
+                .iter()
+                .filter(|c| c.name == "tab")
+                .enumerate()
+                .map(|(i, t)| {
+                    t.props
+                        .get("name")
+                        .cloned()
+                        .unwrap_or_else(|| format!("Tab #{}", i + 1))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Number of tabs in a serialized layout (direct `tab` children of
 /// `layout` — not tab templates or swap layouts).
 pub fn tab_count(src: &str) -> usize {

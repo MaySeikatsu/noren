@@ -110,6 +110,7 @@ hide     = "ctrl-h"   # hide / unhide the selected entry (kept in
 hidden   = "alt-h"    # show hidden entries (⊘) in the list, or not
 rename   = "ctrl-e"   # rename the selected running session (⏎ applies)
 paths    = "alt-p"    # search names only (default) or names + paths
+tabs     = "alt-t"    # tab menu of the selected session (⏎ lands in that tab)
 
 # ---- Confirmation -------------------------------------------------------------
 # When kill/delete ask before acting (y/N right in the picker prompt; on a

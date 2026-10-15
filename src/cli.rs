@@ -86,6 +86,16 @@ pub enum Cmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         line: Vec<String>,
     },
+    /// picker-internal: tab menu rows for a session
+    #[command(hide = true)]
+    TabRows { name: String },
+    /// internal: wait for a new client on <session>, then go to tab
+    #[command(hide = true)]
+    GotoTab {
+        session: String,
+        position: usize,
+        before: usize,
+    },
     /// picker-internal: snapshot menu rows for a session
     #[command(hide = true)]
     SnapshotRows { name: String },
