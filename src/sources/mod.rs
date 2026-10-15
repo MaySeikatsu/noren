@@ -6,7 +6,7 @@ pub mod zellij;
 pub mod zoxide;
 
 use crate::config::{Config, wildcard_match};
-use crate::util::{expand_path, name_from_path, sanitize};
+use crate::util::{expand_path, name_from_path, sanitize, tilde_path};
 
 #[derive(Debug, Clone)]
 pub struct Row {
@@ -242,16 +242,45 @@ pub fn collect(cfg: &Config, sel: Selection) -> Vec<Row> {
     rows
 }
 
-/// TSV columns: source, name, path, state, display ("<icon><name>").
-pub fn rows_to_tsv(rows: &[Row]) -> String {
+/// Name column width cap for the dimmed path; longer names just get the
+/// two-space gap.
+const NAME_PAD_MAX: usize = 28;
+
+/// Display column: "<icon><name>", plus — with show_paths — the name padded
+/// to `pad` and a dimmed `~`-abbreviated path. Never contains a tab (the
+/// display is the 5th TSV field).
+fn display(r: &Row, show_paths: bool, pad: usize) -> String {
+    let name = r.name.replace('\t', " ");
+    let mut out = format!("{}{name}", r.icon);
+    if show_paths && !r.path.is_empty() {
+        let fill = pad.saturating_sub(name.chars().count());
+        let path = tilde_path(&r.path).replace('\t', " ");
+        out.push_str(&format!("{:fill$}  \x1b[2m{path}\x1b[0m", ""));
+    }
+    out
+}
+
+/// TSV columns: source, name, path, state, display.
+pub fn rows_to_tsv(rows: &[Row], cfg: &Config) -> String {
+    let pad = rows
+        .iter()
+        .filter(|r| r.source != "sep")
+        .map(|r| r.name.chars().count())
+        .max()
+        .unwrap_or(0)
+        .min(NAME_PAD_MAX);
     rows.iter()
         .map(|r| {
             if r.source == "sep" {
                 return format!("sep\t\t\tsep\t{SEPARATOR_DISPLAY}");
             }
             format!(
-                "{}\t{}\t{}\t{}\t{}{}",
-                r.source, r.name, r.path, r.state, r.icon, r.name
+                "{}\t{}\t{}\t{}\t{}",
+                r.source,
+                r.name,
+                r.path,
+                r.state,
+                display(r, cfg.show_paths, pad)
             )
         })
         .collect::<Vec<_>>()
@@ -261,7 +290,7 @@ pub fn rows_to_tsv(rows: &[Row]) -> String {
 /// `noren list <word>` — print rows for the selected source(s).
 pub fn list_cmd(cfg: &Config, word: &str) {
     let rows = collect(cfg, parse_source(word));
-    println!("{}", rows_to_tsv(&rows));
+    println!("{}", rows_to_tsv(&rows, cfg));
 }
 
 #[cfg(test)]
@@ -480,6 +509,42 @@ mod tests {
         let mut r = row("zellij", "foo", false);
         r.path = "/tmp/foo".into();
         r.icon = "▢ ".into();
-        assert_eq!(rows_to_tsv(&[r]), "zellij\tfoo\t/tmp/foo\tlive\t▢ foo");
+        let plain = Config {
+            show_paths: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            rows_to_tsv(std::slice::from_ref(&r), &plain),
+            "zellij\tfoo\t/tmp/foo\tlive\t▢ foo"
+        );
+        assert_eq!(
+            rows_to_tsv(&[r], &Config::default()),
+            "zellij\tfoo\t/tmp/foo\tlive\t▢ foo  \x1b[2m/tmp/foo\x1b[0m"
+        );
+    }
+
+    #[test]
+    fn display_pads_names_and_dims_paths() {
+        let cfg = Config::default();
+        let home = crate::util::home_dir().to_string_lossy().into_owned();
+        let long = "x".repeat(30);
+        let rows = vec![
+            at("zellij", "ab", &format!("{home}/proj")),
+            at("zellij", "abcd", ""),
+            separator_row(),
+            at("zoxide", &long, "/l"),
+        ];
+        let tsv = rows_to_tsv(&rows, &cfg);
+        let displays: Vec<&str> = tsv.lines().map(|l| l.split('\t').nth(4).unwrap()).collect();
+        let pad = " ".repeat(26); // 28 (cap) - 2
+        assert_eq!(displays[0], format!("ab{pad}  \x1b[2m~/proj\x1b[0m"));
+        // No path: no padding, no suffix.
+        assert_eq!(displays[1], "abcd");
+        assert_eq!(displays[2], SEPARATOR_DISPLAY);
+        // Over the cap: just the two-space gap.
+        assert_eq!(displays[3], format!("{long}  \x1b[2m/l\x1b[0m"));
+        // Tabs never leak into the display field (stays the 5th column).
+        let d = display(&at("zoxide", "ta\tb", "/t\tb"), true, 0);
+        assert_eq!(d, "ta b  \x1b[2m/t b\x1b[0m");
     }
 }

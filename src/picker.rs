@@ -24,7 +24,7 @@ fn self_exe() -> String {
 
 pub fn picker(cfg: &Config) -> anyhow::Result<()> {
     let rows = collect(cfg, Selection::all());
-    let tsv = rows_to_tsv(&rows);
+    let tsv = rows_to_tsv(&rows, cfg);
     if tsv.is_empty() {
         eprintln!("noren: no sessions, no zoxide dirs, no config entries");
         return Ok(());

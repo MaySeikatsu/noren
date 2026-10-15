@@ -16,7 +16,8 @@ fn list_zoxide_uses_stubbed_binary() {
     assert!(ok);
     assert_eq!(
         out,
-        "zoxide\talpha\t/tmp/alpha\tdir\t📁 alpha\nzoxide\tbeta\t/tmp/beta\tdir\t📁 beta\n"
+        "zoxide\talpha\t/tmp/alpha\tdir\t📁 alpha  \x1b[2m/tmp/alpha\x1b[0m\n\
+         zoxide\tbeta\t/tmp/beta\tdir\t📁 beta   \x1b[2m/tmp/beta\x1b[0m\n"
     );
 }
 
@@ -161,7 +162,10 @@ fn pin_row_pins_dirs_separately_and_sorts_them_first_in_dir_group() {
     let lines: Vec<&str> = out.trim_end().split('\n').collect();
     assert!(lines[0].starts_with("zellij\twork"));
     assert!(lines[1].starts_with("sep\t"));
-    assert_eq!(lines[2], "zoxide\tbbb\t/tmp/bbb\tdir\t📌 📁 bbb");
+    assert_eq!(
+        lines[2],
+        "zoxide\tbbb\t/tmp/bbb\tdir\t📌 📁 bbb   \x1b[2m/tmp/bbb\x1b[0m"
+    );
     assert!(lines[3].starts_with("zoxide\taaa"));
 
     // pin-row on a session row toggles the shared file, same as `noren pin`.
@@ -204,7 +208,11 @@ fn pinned_dirs_join_session_pins_when_configured() {
     // Pinned dir slots in right after the pinned session, before live ones;
     // the separator moves above the whole session area.
     assert!(lines[0].starts_with("zellij\tpinned-sess"));
-    assert_eq!(lines[1], "zoxide\tbbb\t/tmp/bbb\tdir\t📌 📁 bbb");
+    // Names pad to the longest one ("pinned-sess") before the dimmed path.
+    assert_eq!(
+        lines[1],
+        "zoxide\tbbb\t/tmp/bbb\tdir\t📌 📁 bbb          \x1b[2m/tmp/bbb\x1b[0m"
+    );
     assert!(lines[2].starts_with("zellij\tlive-sess"));
     assert!(lines[3].starts_with("sep\t"));
     assert!(lines[4].starts_with("zoxide\taaa"));
@@ -401,7 +409,7 @@ fn config_prefers_noren_dir_over_legacy_zjp() {
     fs::create_dir_all(env.home.join(".config/zjp")).unwrap();
     fs::write(
         env.home.join(".config/zjp/config.toml"),
-        "blacklist = [\"x\"]\n",
+        "blacklist = [\"/tmp/x\"]\n",
     )
     .unwrap();
     fs::create_dir_all(env.home.join(".config/noren")).unwrap();
@@ -413,7 +421,7 @@ fn config_prefers_noren_dir_over_legacy_zjp() {
 
     let (out, _, ok) = env.run(&["list", "zoxide"]);
     assert!(ok);
-    assert_eq!(out, "zoxide\tx\t/tmp/x\tdir\tx\n");
+    assert_eq!(out, "zoxide\tx\t/tmp/x\tdir\tx  \x1b[2m/tmp/x\x1b[0m\n");
 }
 
 #[test]

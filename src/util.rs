@@ -89,6 +89,21 @@ pub fn name_from_path(p: &str, dir_length: usize) -> String {
     out
 }
 
+/// Abbreviate a `$HOME` prefix to `~` for display (only on a component
+/// boundary: `/home/u2` stays as-is for HOME=/home/u).
+pub fn tilde_path(p: &str) -> String {
+    let home = home_dir().to_string_lossy().into_owned();
+    let home = home.trim_end_matches('/');
+    if home.is_empty() {
+        return p.to_string();
+    }
+    match p.strip_prefix(home) {
+        Some("") => "~".to_string(),
+        Some(rest) if rest.starts_with('/') => format!("~{rest}"),
+        _ => p.to_string(),
+    }
+}
+
 /// Does the argument look like a path (vs a session name)?
 pub fn is_pathlike(s: &str) -> bool {
     s.starts_with('/') || s.starts_with('~') || s.starts_with("./") || s.starts_with("../")
@@ -122,6 +137,15 @@ mod tests {
         assert_eq!(expand_path("~"), home);
         assert_eq!(expand_path("~/x"), home.join("x"));
         assert_eq!(expand_path("/a/b/../c/./d"), PathBuf::from("/a/c/d"));
+    }
+
+    #[test]
+    fn tilde_abbreviates_home_on_component_boundary() {
+        let home = home_dir().to_string_lossy().into_owned();
+        assert_eq!(tilde_path(&home), "~");
+        assert_eq!(tilde_path(&format!("{home}/a/b")), "~/a/b");
+        assert_eq!(tilde_path(&format!("{home}x/a")), format!("{home}x/a"));
+        assert_eq!(tilde_path("/elsewhere"), "/elsewhere");
     }
 
     #[test]
