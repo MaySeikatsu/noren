@@ -76,30 +76,32 @@ type Entry = (&'static str, &'static str, u8);
 
 /// Compact overview, line 1: views and list controls.
 const COMPACT_VIEWS: &[Entry] = &[
-    ("sessions", "sessions", 1),
-    ("dirs", "dirs", 2),
-    ("config", "config", 6),
-    ("all", "all", 3),
-    ("reload", "reload", 5),
-    ("preview", "preview", 4),
+    ("sessions", "sessions", 2),
+    ("dirs", "dirs", 3),
+    ("config", "config", 9),
+    ("all", "all", 4),
+    ("reload", "reload", 8),
+    ("preview", "preview", 5),
 ];
 /// Compact overview, line 2: row actions, then ⏎ / esc.
 const COMPACT_ACTIONS: &[Entry] = &[
-    ("pin", "pin", 6),
-    ("rename", "rename", 5),
-    ("kill", "kill", 3),
-    ("delete", "delete", 4),
+    ("tabs", "tabs", 6),
+    ("pin", "pin", 10),
+    ("rename", "rename", 9),
+    ("kill", "kill", 7),
+    ("delete", "delete", 8),
     ("enter", "connect", 1),
-    ("esc", "close", 2),
+    ("esc", "close", 3),
 ];
-/// Everything else, in the full overview (F1).
+/// Everything else, in the full overview (F1) — which lists EVERY bind.
 const FULL_MORE: &[Entry] = &[
+    ("preview_style", "preview style", 0),
     ("new_window", "new window", 0),
     ("snapshot", "snapshots", 0),
-    ("tabs", "tabs", 0),
     ("hide", "hide", 0),
     ("hidden", "show hidden", 0),
     ("paths", "search paths", 0),
+    ("live", "preview (alias)", 0),
 ];
 
 /// Key overview above the prompt. Compact (default): at most
@@ -120,7 +122,9 @@ fn header(cfg: &Config, warnings: &[String], width: Option<usize>, full: bool) -
     };
     // The config view is empty without [[session]] entries — don't
     // advertise it.
-    let wanted = |action: &str| action != "config" || !cfg.session.is_empty();
+    // The full overview lists every bind; the compact one doesn't
+    // advertise an empty config view.
+    let wanted = |action: &str| full || action != "config" || !cfg.session.is_empty();
     let cell = |key: &str, label: &str| {
         (
             key.chars().count() + 1 + label.chars().count(),
@@ -330,7 +334,11 @@ fn fzf_binds(cfg: &Config, exe: &str) -> Vec<String> {
                 format!("transform({exe} pick {action} {{}})")
             }
             // One key cycles the preview: live → layout → text → off.
+            // combined: one key cycles styles and off; separate: it only
+            // shows/hides and preview_style cycles the style.
+            "preview" | "live" if cfg.preview_toggle == "separate" => "toggle-preview".to_string(),
             "preview" | "live" => format!("transform({exe} pick preview-mode)"),
+            "preview_style" => format!("transform({exe} pick preview-style)"),
             "hide" => format!("transform({exe} pick hide {{}})"),
             "rename" => format!("transform({exe} pick rename {{}})"),
             "tabs" => format!("transform({exe} pick tabs {{}})"),
@@ -786,7 +794,7 @@ pub fn preview_mode_override() -> Option<String> {
     let id = std::env::var("NOREN_PICKER_ID").ok()?;
     std::fs::read_to_string(mode_file(&id))
         .ok()
-        .filter(|m| matches!(m.as_str(), "live" | "layout" | "text" | "off"))
+        .filter(|m| matches!(m.as_str(), "tabs" | "live" | "layout" | "text" | "off"))
 }
 
 /// Present while the full key overview is shown (F1).
@@ -927,6 +935,7 @@ pub fn pick(event: &str, line: &str) {
             None => format!("{}+{}", ghost(HINT), reload(&exe, &fzf_prompt())),
         },
         "preview-mode" => toggle_preview_mode(&cfg),
+        "preview-style" => cycle_preview_style(&cfg),
         "header" => {
             let (cfg, warnings) = Config::load_with_warnings();
             let width = std::env::var("FZF_COLUMNS")
@@ -1193,26 +1202,61 @@ fn toggle_show_hidden(exe: &str) -> String {
     format!("{}+{}", ghost(msg), reload(exe, &fzf_prompt()))
 }
 
-/// ^/: cycle the preview live → layout → text → off → live. The preview
-/// re-renders and labels itself with what it shows.
+/// The session preview style the config asks for: "tabs" (every tab live,
+/// side by side), "live", "layout" or "text".
+pub fn configured_style(cfg: &Config) -> &'static str {
+    match cfg.preview_mode.as_str() {
+        "live" if cfg.live_all_tabs => "tabs",
+        "live" => "live",
+        "text" => "text",
+        _ => "layout",
+    }
+}
+
+/// Preview styles in cycle order.
+const STYLES: &[&str] = &["tabs", "live", "layout", "text"];
+
+fn style_label(style: &str) -> &'static str {
+    match style {
+        "tabs" => "live · all tabs",
+        "live" => "live · active tab",
+        "layout" => "layout",
+        "text" => "text",
+        _ => "off",
+    }
+}
+
+/// ^/ (combined): cycle all tabs → live → layout → text → off → all tabs.
+/// The preview re-renders and labels itself with what it shows.
 fn toggle_preview_mode(cfg: &Config) -> String {
-    let now = preview_mode_override().unwrap_or_else(|| match cfg.preview_mode.as_str() {
-        "live" | "text" => cfg.preview_mode.clone(),
-        _ => "layout".into(),
-    });
-    let next = match now.as_str() {
-        "live" => "layout",
-        "layout" => "text",
-        "text" => "off",
-        _ => "live",
+    let now = preview_mode_override().unwrap_or_else(|| configured_style(cfg).to_string());
+    let next = match STYLES.iter().position(|s| *s == now) {
+        Some(i) if i + 1 < STYLES.len() => STYLES[i + 1],
+        Some(_) => "off",
+        None => STYLES[0],
     };
     let _ = std::fs::write(mode_file(&picker_id()), next);
-    let msg = ghost(&format!("preview: {next}"));
+    let msg = ghost(&format!("preview: {}", style_label(next)));
     match (now.as_str(), next) {
-        (_, "off") => format!("hide-preview+{msg}"),
-        ("off", _) => format!("show-preview+refresh-preview+{msg}"),
-        _ => format!("refresh-preview+{msg}"),
+        (_, "off") => format!("{msg}+hide-preview"),
+        ("off", _) => format!("{msg}+show-preview+refresh-preview"),
+        _ => format!("{msg}+refresh-preview"),
     }
+}
+
+/// preview_style key: cycle the style only (never off) — the separate
+/// mode's companion to a plain show/hide toggle.
+fn cycle_preview_style(cfg: &Config) -> String {
+    let now = preview_mode_override()
+        .filter(|m| m != "off")
+        .unwrap_or_else(|| configured_style(cfg).to_string());
+    let i = STYLES.iter().position(|s| *s == now).unwrap_or(0);
+    let next = STYLES[(i + 1) % STYLES.len()];
+    let _ = std::fs::write(mode_file(&picker_id()), next);
+    format!(
+        "{}+show-preview+refresh-preview",
+        ghost(&format!("preview: {}", style_label(next)))
+    )
 }
 
 fn pin(cfg: &Config, exe: &str, row: &Row) -> String {
@@ -1444,7 +1488,10 @@ mod tests {
 
     #[test]
     fn compact_header_shows_the_main_keys_and_the_f1_hint() {
-        let cfg = Config::default();
+        let cfg = Config {
+            header_lines: 2,
+            ..Config::default()
+        };
         let h = header(&cfg, &[], None, false);
         assert_eq!(h.lines().count(), 2, "{h}");
         for k in [
@@ -1460,6 +1507,7 @@ mod tests {
         assert!(!h.contains("^f"), "{h}");
         let with_sessions = Config {
             session: vec![crate::config::SessionEntry::default()],
+            header_lines: 2,
             ..Config::default()
         };
         assert!(header(&with_sessions, &[], None, false).contains("^f"));
@@ -1470,13 +1518,16 @@ mod tests {
 
     #[test]
     fn hint_moves_up_rather_than_dropping_pin_and_rename() {
-        let cfg = Config::default();
+        let cfg = Config {
+            header_lines: 2,
+            ..Config::default()
+        };
         // 61 columns = the list pane of a 160-column picker.
-        // Every compact key fits; the hint moves up instead of costing
-        // pin/rename.
+        // The hint moves up rather than costing more keys; only the
+        // lowest-priority one (pin) gives way to tabs.
         let h = header(&cfg, &[], Some(61), false);
         for k in [
-            "^t", "^z", "^a", "^r", "^/", "^p", "^e", "^k", "^d", "⏎", "esc", "f1",
+            "^t", "^z", "^a", "^r", "^/", "^w", "^e", "^k", "^d", "⏎", "esc", "f1",
         ] {
             assert!(h.contains(k), "missing {k}: {h}");
         }

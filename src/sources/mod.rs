@@ -742,8 +742,14 @@ mod tests {
         let second = tsv.lines().nth(1).unwrap();
         assert!(second.contains("…)"), "{second:?}");
         assert!(tabs_text(&rows[1]).chars().count() <= TABS_MAX);
-        // Off by default: no tabs anywhere.
-        let off = rows_to_tsv(&rows, &Config::default());
+        // "off": no tabs anywhere.
+        let off = rows_to_tsv(
+            &rows,
+            &Config {
+                show_tabs: "off".into(),
+                ..Config::default()
+            },
+        );
         assert!(!off.contains("(a, b)"));
     }
 
@@ -763,7 +769,10 @@ mod tests {
 
     #[test]
     fn display_pads_names_and_dims_paths() {
-        let cfg = Config::default();
+        let cfg = Config {
+            show_tabs: "off".into(),
+            ..Config::default()
+        };
         let home = crate::util::home_dir().to_string_lossy().into_owned();
         let long = "x".repeat(30);
         let rows = vec![

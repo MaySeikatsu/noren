@@ -561,36 +561,64 @@ fn header_is_compact_and_f1_toggles_the_full_overview() {
     let rt = env.home.join("run");
     fs::create_dir_all(&rt).unwrap();
     let base = [
-        ("FZF_COLUMNS", "80"),
+        ("FZF_COLUMNS", "400"),
         ("NOREN_PICKER_ID", "9"),
         ("XDG_RUNTIME_DIR", rt.to_str().unwrap()),
     ];
+    // Default: one line, the F1 hint at its end.
     let (out, _, _) = env.run_env(&["pick", "header"], &base);
-    assert_eq!(out.lines().count(), 2, "{out}");
-    assert!(out.contains("f1") && !out.contains("M-h"), "{out}");
-    let (out, _, _) = env.run_env(&["pick", "help"], &base);
-    assert!(out.starts_with("transform-header("), "{out}");
-    let (out, _, _) = env.run_env(&["pick", "header"], &base);
+    assert_eq!(out.lines().count(), 1, "{out}");
     assert!(
-        out.contains("M-h") && out.contains("^h") && out.contains("less"),
+        out.contains("^w") && out.contains("f1") && !out.contains("M-h"),
         "{out}"
     );
+    let (out, _, _) = env.run_env(&["pick", "help"], &base);
+    assert!(out.starts_with("transform-header("), "{out}");
+    // Full: every bind, the config view and the style key included.
+    let (out, _, _) = env.run_env(&["pick", "header"], &base);
+    for k in ["M-h", "^h", "^f", "^l", "M-⏎", "^s", "M-p", "less"] {
+        assert!(out.contains(k), "full overview missing {k}: {out}");
+    }
     env.run_env(&["pick", "help"], &base);
     let (out, _, _) = env.run_env(&["pick", "header"], &base);
-    assert_eq!(out.lines().count(), 2, "back to compact: {out}");
+    assert_eq!(out.lines().count(), 1, "back to compact: {out}");
 }
 
 #[test]
-fn ctrl_slash_cycles_live_layout_text_off() {
+fn ctrl_slash_cycles_all_tabs_live_layout_text_off() {
     let env = setup();
-    let steps: Vec<String> = (0..4)
+    let steps: Vec<String> = (0..5)
         .map(|_| pick(&env, &["preview-mode"], "⚡  ", ""))
         .collect();
-    assert!(steps[0].starts_with("refresh-preview") && steps[0].contains("preview: layout"));
-    assert!(steps[1].starts_with("refresh-preview") && steps[1].contains("preview: text"));
-    assert!(steps[2].starts_with("hide-preview") && steps[2].contains("preview: off"));
+    // Default style is "all tabs live"; the cycle continues from there.
     assert!(
-        steps[3].starts_with("show-preview+refresh-preview") && steps[3].contains("preview: live")
+        steps[0].contains("preview: live · active tab") && steps[0].ends_with("refresh-preview")
+    );
+    assert!(steps[1].contains("preview: layout"));
+    assert!(steps[2].contains("preview: text"));
+    assert!(steps[3].contains("preview: off") && steps[3].ends_with("hide-preview"));
+    assert!(steps[4].contains("preview: live · all tabs"));
+    assert!(steps[4].ends_with("show-preview+refresh-preview"));
+}
+
+#[test]
+fn separate_preview_toggle_splits_on_off_and_style() {
+    let env = setup();
+    write_config(&env, "preview_toggle = \"separate\"\n");
+    let (out, _, _) = env.run(&["pick", "header"]);
+    let _ = out;
+    // preview_style never turns the preview off.
+    let steps: Vec<String> = (0..5)
+        .map(|_| pick(&env, &["preview-style"], "⚡  ", ""))
+        .collect();
+    assert!(
+        steps
+            .iter()
+            .all(|s| !s.contains("hide-preview") && !s.contains("preview: off"))
+    );
+    assert!(
+        steps[3].contains("preview: live · all tabs"),
+        "wraps around: {steps:?}"
     );
 }
 

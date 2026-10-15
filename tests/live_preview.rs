@@ -40,7 +40,11 @@ fn calls(env: &Env) -> Vec<String> {
 #[test]
 fn live_session_shows_focused_tiled_pane_of_active_tab() {
     let env = setup(ZELLIJ);
-    let (out, err, ok) = env.run_env(&["preview", "zellij\tlv\t\tlive\t▢ lv"], &DIMS);
+    // "live" = the active tab only (the default "tabs" shows all of them).
+    let (out, err, ok) = env.run_env(
+        &["preview", "--mode", "live", "zellij\tlv\t\tlive\t▢ lv"],
+        &DIMS,
+    );
     assert!(ok, "{err}");
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(
@@ -168,7 +172,7 @@ fn all_tabs_mode_shows_every_tab_side_by_side() {
     assert_eq!(plain[0], "● 2 tabs · lv");
     // Two cells, 29 + gutter + 29 = 59 ≤ 60 columns; titles side by side.
     assert!(
-        plain[1].starts_with(" notes ") && plain[1].contains("│ code "),
+        plain[1].starts_with("   notes ") && plain[1].contains("┃ ● code "),
         "{plain:?}"
     );
     // Both tabs' focused panes were dumped (2 = notes, 4 = code).
@@ -178,7 +182,7 @@ fn all_tabs_mode_shows_every_tab_side_by_side() {
     }
     // The active tab's title is in reverse video.
     assert!(
-        out.lines().nth(1).unwrap().contains("\x1b[7m code "),
+        out.lines().nth(1).unwrap().contains("\x1b[1;7;32m ● code "),
         "{out}"
     );
 }

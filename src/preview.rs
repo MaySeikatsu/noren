@@ -186,9 +186,9 @@ fn session_style(cfg: &Config, mode: Option<&str>) -> String {
     let m = mode
         .map(str::to_string)
         .or_else(crate::picker::preview_mode_override)
-        .unwrap_or_else(|| cfg.preview_mode.clone());
+        .unwrap_or_else(|| crate::picker::configured_style(cfg).to_string());
     match m.as_str() {
-        "live" | "text" => m,
+        "tabs" | "live" | "text" => m,
         _ => "layout".to_string(),
     }
 }
@@ -205,13 +205,21 @@ pub fn preview(cfg: &Config, line: &str, mode: Option<&str>) {
         "sep" => (String::new(), String::new()),
         // Live: the session's current screen. Only rows listed as running
         // are contacted — exited sessions never (it would hang or resurrect).
-        "live" if style == "live" => {
+        "live" if style == "live" || style == "tabs" => {
+            let all = style == "tabs";
             match fzf_preview_dims()
                 .ok_or(crate::live_preview::Miss::Unavailable)
-                .and_then(|(w, h)| {
-                    crate::live_preview::render_live(r.name, w, h, cfg.live_all_tabs)
-                }) {
-                Ok(screen) => (screen, "● live".to_string()),
+                .and_then(|(w, h)| crate::live_preview::render_live(r.name, w, h, all))
+            {
+                Ok(screen) => (
+                    screen,
+                    if all {
+                        "● live · all tabs"
+                    } else {
+                        "● live"
+                    }
+                    .to_string(),
+                ),
                 Err(miss) => {
                     let why = match miss {
                         crate::live_preview::Miss::NotRunning => "session not running",
@@ -221,7 +229,7 @@ pub fn preview(cfg: &Config, line: &str, mode: Option<&str>) {
                 }
             }
         }
-        "exited" if style == "live" => (
+        "exited" if style == "live" || style == "tabs" => (
             layout_render(r.name, false),
             "▦ layout — session not running".to_string(),
         ),
@@ -241,7 +249,7 @@ pub fn preview(cfg: &Config, line: &str, mode: Option<&str>) {
         // holds the 1-based position), else the saved layout.
         "tab" => {
             let position: usize = r.path.parse().unwrap_or(1);
-            let live = (style == "live")
+            let live = (style == "live" || style == "tabs")
                 .then(fzf_preview_dims)
                 .flatten()
                 .and_then(|(w, h)| {

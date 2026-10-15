@@ -20,6 +20,9 @@ pub struct Config {
     pub live_all_tabs: bool,
     pub auto_reload_secs: u64,
     pub header_lines: usize,
+    pub preview_toggle: String,
+    pub preview_tint: bool,
+    pub preview_bg: String,
     pub terminal: String,
     pub preview_position: String,
     pub preview_position_compact: String,
@@ -59,10 +62,18 @@ impl Default for Config {
             // 0 = only when the cursor moves.
             live_refresh_ms: 1000,
             // Live preview of ALL tabs side by side instead of the active one.
-            live_all_tabs: false,
+            live_all_tabs: true,
             // Key overview above the prompt: lines in its compact form (the
             // most used keys; F1 shows all).
-            header_lines: 2,
+            header_lines: 1,
+            // "combined": the preview key cycles styles AND off; "separate":
+            // it only shows/hides, keys.preview_style cycles the style.
+            preview_toggle: "combined".into(),
+            // Preview background a shade darker than the terminal's (read
+            // via OSC 11), so the picker and preview read as two areas.
+            preview_tint: true,
+            // Explicit preview background ("#1e1e2e"), overriding the tint.
+            preview_bg: String::new(),
             // Re-list sessions/dirs this often while the picker is open, so
             // sessions started or ended elsewhere show up (0 = off).
             auto_reload_secs: 60,
@@ -83,7 +94,7 @@ impl Default for Config {
             show_paths: true,
             // Session tab names in the list: "off", "column" (own column
             // between name and path) or "inline" (right behind the name).
-            show_tabs: "off".into(),
+            show_tabs: "inline".into(),
             // Snapshots per session (`noren snapshot`); oldest pruned beyond this.
             snapshot_keep: 5,
             // Auto-snapshot pinned sessions on pin and on connect.
@@ -123,6 +134,7 @@ pub struct Keys {
     pub rename: String,
     pub paths: String,
     pub tabs: String,
+    pub preview_style: String,
     pub help: String,
     pub new_window: String,
 }
@@ -146,7 +158,8 @@ impl Default for Keys {
             hidden: "alt-h".into(),
             rename: "ctrl-e".into(),
             paths: "alt-p".into(),
-            tabs: "alt-t".into(),
+            tabs: "ctrl-w".into(),
+            preview_style: "ctrl-l".into(),
             help: "f1".into(),
             // ctrl-enter is indistinguishable from enter in most terminals.
             new_window: "alt-enter".into(),
@@ -174,6 +187,7 @@ impl Keys {
             ("rename", self.rename.as_str()),
             ("paths", self.paths.as_str()),
             ("tabs", self.tabs.as_str()),
+            ("preview_style", self.preview_style.as_str()),
             ("help", self.help.as_str()),
             ("new_window", self.new_window.as_str()),
         ]
@@ -364,6 +378,9 @@ const TOP_KEYS: &[&str] = &[
     "live_all_tabs",
     "header_lines",
     "auto_reload_secs",
+    "preview_toggle",
+    "preview_tint",
+    "preview_bg",
     "terminal",
     "preview_position",
     "preview_position_compact",
@@ -398,6 +415,7 @@ const KEYS_KEYS: &[&str] = &[
     "rename",
     "paths",
     "tabs",
+    "preview_style",
     "help",
     "new_window",
 ];
@@ -463,6 +481,12 @@ pub fn parse_with_warnings(raw: &str, origin: &str) -> (Config, Vec<String>) {
                 unknown_keys(t, known, &format!("{key}[{i}]."), &mut w);
             }
         }
+    }
+    if !matches!(cfg.preview_toggle.as_str(), "combined" | "separate") {
+        w.push(format!(
+            "preview_toggle = \"{}\" is not \"combined\" or \"separate\" (using combined)",
+            cfg.preview_toggle
+        ));
     }
     if !matches!(cfg.show_tabs.as_str(), "off" | "column" | "inline") {
         w.push(format!(
