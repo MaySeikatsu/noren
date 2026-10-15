@@ -384,12 +384,13 @@ fn parse_row(line: &str) -> Row<'_> {
 /// Run a confirmed (or confirmation-free) kill/delete; fzf actions out.
 fn run_kind(exe: &str, kind: Kind, name: &str, state: SessionState, view_prompt: &str) -> String {
     if actions::is_current(name) && matches!(state, SessionState::Live { .. }) {
-        // Switches this client away first (discard); the picker pane dies
-        // with the session, so there is nothing to reload.
+        // Switches this client away first (discard); on success the picker
+        // pane dies with the session. `execute` (not -silent) keeps a
+        // failure — e.g. no way to switch away — on screen.
         return act(
-            "execute-silent",
+            "execute",
             &format!(
-                "{exe} {} --yes {}",
+                "{exe} {} --yes {} || {{ echo; printf 'press enter to continue '; read _; }}",
                 kind.verb(),
                 crate::util::shell_quote(name)
             ),

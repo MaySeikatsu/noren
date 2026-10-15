@@ -214,8 +214,12 @@ fn pick_current_session_kill_hands_off_to_cli() {
     e.push(("FZF_PROMPT", prompt));
     e.push(("FZF_QUERY", "y"));
     let (out, _, _) = env.run_env(&["pick", "answer"], &e);
-    assert!(out.contains("execute-silent("), "{out}");
-    assert!(out.contains(" kill --yes 'att'"), "{out}");
+    // Not -silent: a failed switch-away must stay readable.
+    assert!(
+        out.contains("execute(") && !out.contains("execute-silent"),
+        "{out}"
+    );
+    assert!(out.contains(" kill --yes 'att' || "), "{out}");
     assert!(mutations(&env).is_empty(), "the CLI does the work");
 }
 

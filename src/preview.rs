@@ -77,6 +77,48 @@ fn render_path(path: &str, preview_cmd: &str) -> String {
     }
 }
 
+/// Expand tabs to 8-column stops. The picker runs fzf with `--tabstop 1`
+/// (its name/path columns are tab-joined), which would otherwise squash
+/// tabs in preview_command output. ANSI escapes take no columns.
+fn expand_tabs(s: &str) -> String {
+    if !s.contains('\t') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut col = 0usize;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\t' => {
+                let n = 8 - col % 8;
+                out.extend(std::iter::repeat_n(' ', n));
+                col += n;
+            }
+            '\n' => {
+                out.push(c);
+                col = 0;
+            }
+            '\x1b' => {
+                // CSI: ESC [ params final-byte — zero width.
+                out.push(c);
+                if chars.peek() == Some(&'[') {
+                    for e in chars.by_ref() {
+                        out.push(e);
+                        if e.is_ascii_alphabetic() || e == '~' {
+                            break;
+                        }
+                    }
+                }
+            }
+            _ => {
+                out.push(c);
+                col += 1;
+            }
+        }
+    }
+    out
+}
+
 /// fzf exports the preview pane size; visual mode needs it to scale boxes.
 fn fzf_preview_dims() -> Option<(usize, usize)> {
     let w: usize = std::env::var("FZF_PREVIEW_COLUMNS").ok()?.parse().ok()?;
@@ -164,11 +206,25 @@ pub fn preview(cfg: &Config, line: &str) {
             render_path(r.path, &pv)
         }
     };
-    println!("{out}");
+    println!("{}", expand_tabs(&out));
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn tabs_expand_to_eight_column_stops_ignoring_ansi() {
+        assert_eq!(super::expand_tabs("a\tb"), "a       b");
+        assert_eq!(
+            super::expand_tabs("12345678\tx\n\ty"),
+            "12345678        x\n        y"
+        );
+        assert_eq!(
+            super::expand_tabs("\x1b[1mab\x1b[0m\tc"),
+            "\x1b[1mab\x1b[0m      c"
+        );
+        assert_eq!(super::expand_tabs("no tabs"), "no tabs");
+    }
+
     use super::*;
 
     #[test]
