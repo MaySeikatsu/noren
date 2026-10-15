@@ -290,7 +290,13 @@ const KEYS_KEYS: &[&str] = &[
 ];
 const CONFIRM_KEYS: &[&str] = &["kill", "delete"];
 const DEFAULT_SESSION_KEYS: &[&str] = &["startup_command", "preview_command", "layout"];
-const SESSION_KEYS: &[&str] = &["name", "path", "startup_command", "preview_command", "layout"];
+const SESSION_KEYS: &[&str] = &[
+    "name",
+    "path",
+    "startup_command",
+    "preview_command",
+    "layout",
+];
 const WILDCARD_KEYS: &[&str] = &["pattern", "startup_command", "preview_command", "layout"];
 
 fn unknown_keys(table: &toml::Table, known: &[&str], prefix: &str, out: &mut Vec<String>) {
@@ -335,7 +341,12 @@ pub fn parse_with_warnings(raw: &str, origin: &str) -> (Config, Vec<String>) {
         }
         for (key, known) in [("session", SESSION_KEYS), ("wildcard", WILDCARD_KEYS)] {
             let arr = table.get(key).and_then(|v| v.as_array());
-            for (i, t) in arr.into_iter().flatten().filter_map(|v| v.as_table()).enumerate() {
+            for (i, t) in arr
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_table())
+                .enumerate()
+            {
                 unknown_keys(t, known, &format!("{key}[{i}]."), &mut w);
             }
         }
@@ -348,12 +359,16 @@ pub fn parse_with_warnings(raw: &str, origin: &str) -> (Config, Vec<String>) {
     }
     for o in &cfg.sort_order {
         if !matches!(o.as_str(), "zellij" | "config" | "zoxide") {
-            w.push(format!("sort_order: unknown group \"{o}\" (zellij|config|zoxide)"));
+            w.push(format!(
+                "sort_order: unknown group \"{o}\" (zellij|config|zoxide)"
+            ));
         }
     }
     for o in &cfg.session_order {
         if !matches!(o.as_str(), "pinned" | "live" | "exited") {
-            w.push(format!("session_order: unknown group \"{o}\" (pinned|live|exited)"));
+            w.push(format!(
+                "session_order: unknown group \"{o}\" (pinned|live|exited)"
+            ));
         }
     }
     let active = cfg.keys.active();
@@ -364,7 +379,9 @@ pub fn parse_with_warnings(raw: &str, origin: &str) -> (Config, Vec<String>) {
             ));
         }
         if matches!(*key, "enter" | "esc" | "change" | "start") {
-            w.push(format!("keys.{action} = \"{key}\" is reserved by the picker"));
+            w.push(format!(
+                "keys.{action} = \"{key}\" is reserved by the picker"
+            ));
         }
     }
     (cfg, w)

@@ -245,7 +245,14 @@ fn target_for(line: &str) -> Option<String> {
 /// An fzf action with an argument, using a delimiter pair the argument
 /// doesn't contain (names/messages may contain parentheses).
 fn act(name: &str, arg: &str) -> String {
-    for (open, close) in [('(', ')'), ('[', ']'), ('{', '}'), ('<', '>'), ('~', '~'), ('!', '!')] {
+    for (open, close) in [
+        ('(', ')'),
+        ('[', ']'),
+        ('{', '}'),
+        ('<', '>'),
+        ('~', '~'),
+        ('!', '!'),
+    ] {
         if !arg.contains(close) {
             return format!("{name}{open}{arg}{close}");
         }
@@ -293,7 +300,13 @@ fn read_pending() -> Option<Pending> {
 fn write_pending(p: &Pending) {
     let _ = std::fs::write(
         pending_file(&picker_id()),
-        format!("{}\n{}\n{}\n{}", p.kind.verb(), p.name, p.prev_prompt, p.prompt),
+        format!(
+            "{}\n{}\n{}\n{}",
+            p.kind.verb(),
+            p.name,
+            p.prev_prompt,
+            p.prompt
+        ),
     );
 }
 
@@ -357,23 +370,13 @@ fn parse_row(line: &str) -> Row<'_> {
 }
 
 /// Run a confirmed (or confirmation-free) kill/delete; fzf actions out.
-fn run_kind(
-    exe: &str,
-    kind: Kind,
-    name: &str,
-    state: SessionState,
-    view_prompt: &str,
-) -> String {
+fn run_kind(exe: &str, kind: Kind, name: &str, state: SessionState, view_prompt: &str) -> String {
     if actions::is_current(name) && matches!(state, SessionState::Live { .. }) {
         // Switches this client away first (discard); the picker pane dies
         // with the session, so there is nothing to reload.
         return act(
             "execute-silent",
-            &format!(
-                "{exe} {} --yes {}",
-                kind.verb(),
-                sh_quote(name)
-            ),
+            &format!("{exe} {} --yes {}", kind.verb(), sh_quote(name)),
         );
     }
     let msg = match actions::perform(kind, name, state) {
@@ -425,7 +428,11 @@ pub fn pick(event: &str, line: &str) {
         "pin" => pin(&cfg, &exe, &row),
         "snapshot" => snapshot(&cfg, &row),
         "kill" | "delete" => {
-            let kind = if event == "kill" { Kind::Kill } else { Kind::Delete };
+            let kind = if event == "kill" {
+                Kind::Kill
+            } else {
+                Kind::Delete
+            };
             confirm_or_run(&cfg, &exe, kind, &row)
         }
         _ => String::new(),
@@ -438,7 +445,10 @@ fn confirm_or_run(cfg: &Config, exe: &str, kind: Kind, row: &Row) -> String {
         return String::new();
     }
     if row.source != "zellij" || row.name.is_empty() {
-        return ghost(&format!("✗ only sessions can be {}d", kind.verb().trim_end_matches('e')));
+        return ghost(&format!(
+            "✗ only sessions can be {}d",
+            kind.verb().trim_end_matches('e')
+        ));
     }
     let state = actions::session_state(cfg, row.name);
     if !actions::should_confirm(cfg, kind, state) {
@@ -457,13 +467,20 @@ fn confirm_or_run(cfg: &Config, exe: &str, kind: Kind, row: &Row) -> String {
     write_pending(&Pending {
         kind,
         name: row.name.to_string(),
-        prev_prompt: if prev.is_empty() { DEFAULT_PROMPT.to_string() } else { prev },
+        prev_prompt: if prev.is_empty() {
+            DEFAULT_PROMPT.to_string()
+        } else {
+            prev
+        },
         prompt: prompt.clone(),
     });
     [
         "change-query()".to_string(),
         act("change-prompt", &prompt),
-        ghost(&format!("y = {} · any other key, ⏎ or esc = cancel", kind.verb())),
+        ghost(&format!(
+            "y = {} · any other key, ⏎ or esc = cancel",
+            kind.verb()
+        )),
         "rebind(change)".to_string(),
     ]
     .join("+")

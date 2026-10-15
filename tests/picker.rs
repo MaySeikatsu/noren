@@ -127,7 +127,10 @@ fn pick_kill_background_runs_immediately_and_keeps_the_view() {
 fn pick_kill_attached_asks_then_y_confirms() {
     let env = setup();
     let out = pick(&env, &["kill", &row("zellij", "att", "live")], "⚡  ", "");
-    assert!(mutations(&env).is_empty(), "must not kill before the answer");
+    assert!(
+        mutations(&env).is_empty(),
+        "must not kill before the answer"
+    );
     assert!(out.contains("rebind(change)"), "{out}");
     let prompt = "⚠ kill attached session att? y/N ";
     assert!(out.contains(&format!("change-prompt({prompt})")), "{out}");
@@ -169,7 +172,12 @@ fn pick_answer_ignores_empty_query_and_stale_state() {
 #[test]
 fn pick_delete_exited_session_needs_no_confirmation() {
     let env = setup();
-    let out = pick(&env, &["delete", &row("zellij", "dead", "exited")], "⚡  ", "");
+    let out = pick(
+        &env,
+        &["delete", &row("zellij", "dead", "exited")],
+        "⚡  ",
+        "",
+    );
     assert_eq!(mutations(&env), ["delete-session dead"]);
     assert!(out.contains("✓ deleted dead"), "{out}");
 }
@@ -287,4 +295,15 @@ fn confirm_policy_is_configurable() {
     write_config(&env, "[confirm]\ndelete = \"never\"\n");
     let out = pick(&env, &["delete", &row("zellij", "att", "live")], "⚡  ", "");
     assert!(out.contains("✓ deleted att"), "{out}");
+}
+
+#[test]
+fn shipped_example_config_is_warning_free() {
+    let env = setup();
+    let example =
+        fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/config.toml.example")).unwrap();
+    write_config(&env, &example);
+    let (_, err, ok) = env.run(&["list", "config"]);
+    assert!(ok);
+    assert!(err.is_empty(), "example config warns: {err}");
 }

@@ -192,7 +192,11 @@ mod tests {
         ];
         for (p, want) in table {
             assert_eq!(
-                [needs_confirm(p, ATT), needs_confirm(p, BG), needs_confirm(p, EX)],
+                [
+                    needs_confirm(p, ATT),
+                    needs_confirm(p, BG),
+                    needs_confirm(p, EX)
+                ],
                 want,
                 "{p:?}"
             );
