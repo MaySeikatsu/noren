@@ -23,6 +23,8 @@ pub struct Config {
     pub snapshot_keep: usize,
     pub auto_snapshot_pinned: bool,
     pub attached_indicator: bool,
+    pub keys: Keys,
+    pub confirm: Confirm,
     pub default_session: DefaultSession,
     pub session: Vec<SessionEntry>,
     pub wildcard: Vec<WildcardEntry>,
@@ -57,9 +59,99 @@ impl Default for Config {
             // Costs ~150-250ms picker startup (one parallel list-clients round
             // trip); false restores the ~20ms instant list.
             attached_indicator: true,
+            keys: Keys::default(),
+            confirm: Confirm::default(),
             default_session: DefaultSession::default(),
             session: vec![],
             wildcard: vec![],
+        }
+    }
+}
+
+/// Picker keybinds (fzf key names, e.g. "ctrl-t", "alt-k"); "" disables a
+/// bind. The picker header is generated from these, so it always shows the
+/// active set.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct Keys {
+    pub sessions: String,
+    pub dirs: String,
+    pub config: String,
+    pub all: String,
+    pub reload: String,
+    pub pin: String,
+    pub snapshot: String,
+    pub kill: String,
+    pub delete: String,
+    pub preview: String,
+}
+
+impl Default for Keys {
+    fn default() -> Self {
+        Keys {
+            sessions: "ctrl-t".into(),
+            dirs: "ctrl-z".into(),
+            config: "ctrl-f".into(),
+            all: "ctrl-a".into(),
+            reload: "ctrl-r".into(),
+            pin: "ctrl-p".into(),
+            snapshot: "ctrl-s".into(),
+            kill: "ctrl-k".into(),
+            delete: "ctrl-d".into(),
+            preview: "ctrl-/".into(),
+        }
+    }
+}
+
+impl Keys {
+    /// (action, key) pairs in header order, disabled binds skipped.
+    pub fn active(&self) -> Vec<(&'static str, &str)> {
+        [
+            ("sessions", self.sessions.as_str()),
+            ("dirs", self.dirs.as_str()),
+            ("config", self.config.as_str()),
+            ("all", self.all.as_str()),
+            ("reload", self.reload.as_str()),
+            ("pin", self.pin.as_str()),
+            ("snapshot", self.snapshot.as_str()),
+            ("kill", self.kill.as_str()),
+            ("delete", self.delete.as_str()),
+            ("preview", self.preview.as_str()),
+        ]
+        .into_iter()
+        .filter(|(_, k)| !k.trim().is_empty())
+        .collect()
+    }
+}
+
+/// When kill/delete ask before acting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConfirmPolicy {
+    /// Every time.
+    Always,
+    /// Only when a terminal shows the session right now (▣).
+    Attached,
+    /// Whenever the session is running (attached or in the background).
+    Running,
+    /// Never.
+    Never,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct Confirm {
+    pub kill: ConfirmPolicy,
+    pub delete: ConfirmPolicy,
+}
+
+impl Default for Confirm {
+    fn default() -> Self {
+        // Killing a background session is cheap to undo (it resurrects);
+        // deleting a running one throws away live work.
+        Confirm {
+            kill: ConfirmPolicy::Attached,
+            delete: ConfirmPolicy::Running,
         }
     }
 }
@@ -100,21 +192,27 @@ fn config_path() -> PathBuf {
 }
 
 impl Config {
+    /// Load the config; problems go to stderr (suppressed under
+    /// NOREN_QUIET, which the picker sets for its own re-execs — it shows
+    /// the warnings in its header instead).
     pub fn load() -> Config {
-        let p = config_path();
-        let Ok(raw) = std::fs::read_to_string(&p) else {
-            return Config::default();
-        };
-        match toml::from_str(&raw) {
-            Ok(cfg) => cfg,
-            Err(_) => {
-                eprintln!(
-                    "noren: warning: failed to parse {}, using defaults",
-                    p.display()
-                );
-                Config::default()
+        let (cfg, warnings) = Config::load_with_warnings();
+        if std::env::var_os("NOREN_QUIET").is_none() {
+            for w in &warnings {
+                eprintln!("noren: {w}");
             }
         }
+        cfg
+    }
+
+    /// Config plus human-readable problems (parse errors with position,
+    /// unknown keys, invalid values). A malformed file yields defaults.
+    pub fn load_with_warnings() -> (Config, Vec<String>) {
+        let p = config_path();
+        let Ok(raw) = std::fs::read_to_string(&p) else {
+            return (Config::default(), vec![]);
+        };
+        parse_with_warnings(&raw, &p.display().to_string())
     }
 
     /// Find a [[session]] entry matching either name or (expanded) path.
@@ -164,6 +262,112 @@ impl Config {
         let pin = if pinned { "📌 " } else { "" };
         format!("{pin}{base}")
     }
+}
+
+/// Known keys per table, for unknown-key warnings (serde silently ignores
+/// them, so a typo like `sort_oder` would otherwise do nothing).
+const TOP_KEYS: &[&str] = &[
+    "sort_order",
+    "session_order",
+    "separator",
+    "pinned_dirs_with_sessions",
+    "preview_mode",
+    "blacklist",
+    "dir_length",
+    "icons",
+    "show_paths",
+    "snapshot_keep",
+    "auto_snapshot_pinned",
+    "attached_indicator",
+    "keys",
+    "confirm",
+    "default_session",
+    "session",
+    "wildcard",
+];
+const KEYS_KEYS: &[&str] = &[
+    "sessions", "dirs", "config", "all", "reload", "pin", "snapshot", "kill", "delete", "preview",
+];
+const CONFIRM_KEYS: &[&str] = &["kill", "delete"];
+const DEFAULT_SESSION_KEYS: &[&str] = &["startup_command", "preview_command", "layout"];
+const SESSION_KEYS: &[&str] = &["name", "path", "startup_command", "preview_command", "layout"];
+const WILDCARD_KEYS: &[&str] = &["pattern", "startup_command", "preview_command", "layout"];
+
+fn unknown_keys(table: &toml::Table, known: &[&str], prefix: &str, out: &mut Vec<String>) {
+    for k in table.keys() {
+        if !known.contains(&k.as_str()) {
+            out.push(format!("unknown config key `{prefix}{k}` (ignored)"));
+        }
+    }
+}
+
+/// Parse `raw` (from `origin`, for messages) into a Config plus warnings.
+pub fn parse_with_warnings(raw: &str, origin: &str) -> (Config, Vec<String>) {
+    let cfg: Config = match toml::from_str(raw) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            // toml's message is multi-line (position + snippet); the first
+            // line carries "line X, column Y" and the reason.
+            let msg = e.to_string();
+            let msg = msg
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join(" ");
+            return (
+                Config::default(),
+                vec![format!("config error in {origin}: {msg} — using defaults")],
+            );
+        }
+    };
+    let mut w = Vec::new();
+    if let Ok(table) = raw.parse::<toml::Table>() {
+        unknown_keys(&table, TOP_KEYS, "", &mut w);
+        let sub = |key: &str| table.get(key).and_then(|v| v.as_table());
+        if let Some(t) = sub("keys") {
+            unknown_keys(t, KEYS_KEYS, "keys.", &mut w);
+        }
+        if let Some(t) = sub("confirm") {
+            unknown_keys(t, CONFIRM_KEYS, "confirm.", &mut w);
+        }
+        if let Some(t) = sub("default_session") {
+            unknown_keys(t, DEFAULT_SESSION_KEYS, "default_session.", &mut w);
+        }
+        for (key, known) in [("session", SESSION_KEYS), ("wildcard", WILDCARD_KEYS)] {
+            let arr = table.get(key).and_then(|v| v.as_array());
+            for (i, t) in arr.into_iter().flatten().filter_map(|v| v.as_table()).enumerate() {
+                unknown_keys(t, known, &format!("{key}[{i}]."), &mut w);
+            }
+        }
+    }
+    if !matches!(cfg.preview_mode.as_str(), "visual" | "text") {
+        w.push(format!(
+            "preview_mode = \"{}\" is not \"visual\" or \"text\" (using visual)",
+            cfg.preview_mode
+        ));
+    }
+    for o in &cfg.sort_order {
+        if !matches!(o.as_str(), "zellij" | "config" | "zoxide") {
+            w.push(format!("sort_order: unknown group \"{o}\" (zellij|config|zoxide)"));
+        }
+    }
+    for o in &cfg.session_order {
+        if !matches!(o.as_str(), "pinned" | "live" | "exited") {
+            w.push(format!("session_order: unknown group \"{o}\" (pinned|live|exited)"));
+        }
+    }
+    let active = cfg.keys.active();
+    for (i, (action, key)) in active.iter().enumerate() {
+        if let Some((other, _)) = active[..i].iter().find(|(_, k)| k == key) {
+            w.push(format!(
+                "keys: \"{key}\" is bound to both `{other}` and `{action}` (`{action}` wins)"
+            ));
+        }
+        if matches!(*key, "enter" | "esc" | "change" | "start") {
+            w.push(format!("keys.{action} = \"{key}\" is reserved by the picker"));
+        }
+    }
+    (cfg, w)
 }
 
 /// Glob matcher with zjp2's semantics (config.nu match-wildcard):
