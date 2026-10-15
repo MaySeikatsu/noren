@@ -73,23 +73,46 @@ fn list_all_merges_sorts_dedupes_and_blacklists() {
         "zellij",
         "echo \"alpha [Created 1h ago]\"\necho \"junk [Created 1h ago]\"",
     );
-    env.stub("zoxide", "echo /tmp/alpha");
+    env.stub(
+        "zoxide",
+        "printf '%s\\n' /tmp/alpha /a/scratch /b/scratch /a/scratch/ /p/proj1 /p/keep",
+    );
     fs::create_dir_all(env.home.join(".config/zjp")).unwrap();
     fs::write(
         env.home.join(".config/zjp/config.toml"),
-        "blacklist = [\"junk\"]\n",
+        "blacklist = [\"junk\", \"scratch\", \"/p/proj*\"]\n",
     )
     .unwrap();
 
+    // (source, name, path) — display is covered by the display tests.
+    let rows = |out: &str| -> Vec<String> {
+        out.lines()
+            .map(|l| l.split('\t').take(3).collect::<Vec<_>>().join("|"))
+            .collect()
+    };
+
     let (out, _, ok) = env.run(&["list", "all"]);
     assert!(ok);
-    // Sessions come first now, so dedupe keeps the zellij "alpha" (the live
-    // row beats the dir row); blacklist hides "junk". Only one area is left,
-    // so no separator line appears.
-    assert_eq!(out, "zellij\talpha\t\tlive\t▢ alpha\n");
+    // "alpha" has no cached path yet, so the dir it was created from is
+    // hidden. Same-basename dirs both stay (dirs dedupe by path only); the
+    // bare "scratch" entry blacklists sessions by name, never dirs by
+    // basename; "/p/proj*" hides dirs by path glob.
+    assert_eq!(
+        rows(&out),
+        vec![
+            "zellij|alpha|",
+            "sep||",
+            "zoxide|scratch|/a/scratch",
+            "zoxide|scratch|/b/scratch",
+            "zoxide|keep|/p/keep",
+        ]
+    );
 
     let (out, _, _) = env.run(&["list", "blacklist"]);
-    assert_eq!(out, "zellij\tjunk\t\tlive\t▢ junk\n");
+    assert_eq!(
+        rows(&out),
+        vec!["zellij|junk|", "sep||", "zoxide|proj1|/p/proj1"]
+    );
 }
 
 #[test]
