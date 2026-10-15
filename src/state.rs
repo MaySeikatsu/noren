@@ -226,7 +226,7 @@ pub fn rename_hidden(old: &str, new: &str) {
     let f = hidden_file();
     let from = format!("session\t{old}");
     let lines = read_lines(&f);
-    if lines.iter().any(|l| *l == from) {
+    if lines.contains(&from) {
         let to = format!("session\t{new}");
         let renamed: Vec<String> = lines
             .into_iter()
