@@ -19,6 +19,7 @@ pub struct Config {
     pub blacklist: Vec<String>,
     pub dir_length: usize,
     pub icons: bool,
+    pub show_paths: bool,
     pub snapshot_keep: usize,
     pub auto_snapshot_pinned: bool,
     pub attached_indicator: bool,
@@ -45,6 +46,9 @@ impl Default for Config {
             blacklist: vec![],
             dir_length: 1,
             icons: true,
+            // Dimmed path after each name in the picker (disambiguates
+            // random session names and same-basename folders).
+            show_paths: true,
             // Snapshots per session (`noren snapshot`); oldest pruned beyond this.
             snapshot_keep: 5,
             // Auto-snapshot pinned sessions on pin and on connect.
