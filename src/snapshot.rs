@@ -184,6 +184,14 @@ pub fn restore_cmd(cfg: &Config, name: &str, index: usize, force: bool) -> anyho
         anyhow::bail!("\"{name}\" has only {} snapshot(s)", snaps.len());
     };
     let snap = snap.clone();
+    // This process runs in a pane of the session it would kill — it would
+    // die halfway, leaving the session gone and nothing recreated.
+    if inside_zellij() && std::env::var("ZELLIJ_SESSION_NAME").is_ok_and(|c| c == name) {
+        anyhow::bail!(
+            "can't restore \"{name}\" from inside itself — switch to another session \
+             first (e.g. `noren last`), then run `noren restore {name}` there"
+        );
+    }
     let stem = snap
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
@@ -209,6 +217,8 @@ pub fn restore_cmd(cfg: &Config, name: &str, index: usize, force: bool) -> anyho
         }
         let _ = Command::new("zellij")
             .args(["delete-session", "--force", name])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .status();
         // Recreating under a name zellij still lists would attach to the
         // old incarnation — wait until it's gone.

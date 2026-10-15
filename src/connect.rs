@@ -214,8 +214,7 @@ pub fn switch_in_place(name: &str) -> anyhow::Result<()> {
     anyhow::bail!(
         "could not switch to session \"{name}\": {}\n\
          hint: install the zellij-switch plugin as ~/.config/zellij/plugins/zellij-switch.wasm \
-         (https://github.com/mostafaqanbaryan/zellij-switch) and grant its permissions, \
-         or upgrade zellij to a release whose `zellij action switch-session` works from the CLI",
+         (https://github.com/mostafaqanbaryan/zellij-switch) and grant its permissions",
         why.join("; ")
     )
 }
@@ -313,6 +312,7 @@ pub fn discard(cfg: &Config, name: Option<&str>) -> anyhow::Result<()> {
             let before = attached_clients(&target);
             switch_in_place(&fallback)?;
             record_last(&fallback);
+            crate::state::forget_previous(&target);
             // Let the client finish switching before its old session dies:
             // wait for this session's client count to drop (skip when it was
             // unknown/0 — nothing to wait for).

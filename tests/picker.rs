@@ -99,6 +99,9 @@ fn delete_uses_force_only_for_running_sessions() {
 #[test]
 fn killing_the_current_session_switches_away_first() {
     let env = setup();
+    let plugins = env.home.join(".config/zellij/plugins");
+    fs::create_dir_all(&plugins).unwrap();
+    fs::write(plugins.join("zellij-switch.wasm"), "").unwrap();
     let (_, _, ok) = env.run_env(
         &["kill", "att", "--yes"],
         &[("ZELLIJ", "1"), ("ZELLIJ_SESSION_NAME", "att")],
@@ -306,4 +309,19 @@ fn shipped_example_config_is_warning_free() {
     let (_, err, ok) = env.run(&["list", "config"]);
     assert!(ok);
     assert!(err.is_empty(), "example config warns: {err}");
+}
+
+#[test]
+fn deleting_the_previous_session_forgets_it_for_last() {
+    let env = setup();
+    let state = env.home.join(".local/state/noren");
+    fs::create_dir_all(&state).unwrap();
+    fs::write(state.join("previous"), "dead").unwrap();
+    fs::write(state.join("last"), "bg").unwrap();
+    assert!(env.run(&["delete", "dead"]).2);
+    assert!(!state.join("previous").exists());
+    // `last` now says so instead of recreating an empty "dead".
+    let (_, err, ok) = env.run(&["last"]);
+    assert!(!ok);
+    assert!(err.contains("no previous session"), "{err}");
 }

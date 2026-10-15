@@ -10,7 +10,7 @@
 //! Keybinds come from `[keys]`; the header is generated from them, so it
 //! always lists exactly the active binds.
 
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
@@ -205,10 +205,22 @@ pub fn picker() -> anyhow::Result<()> {
         return Ok(());
     }
     let line = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    match target_for(&line) {
-        Some(t) => session_connect(&cfg, &t),
-        None => Ok(()),
+    let Some(target) = target_for(&line) else {
+        return Ok(());
+    };
+    let result = session_connect(&cfg, &target);
+    if let Err(e) = &result
+        && crate::connect::inside_zellij()
+        && std::io::stdin().is_terminal()
+    {
+        // The picker usually runs in a floating pane that closes on exit;
+        // hold it open so the error can actually be read.
+        eprintln!("noren: {e:#}");
+        eprint!("\npress enter to close ");
+        let _ = std::io::stdin().read_line(&mut String::new());
+        return Ok(());
     }
+    result
 }
 
 /// What fzf printed -> connect target. A full row connects sessions by

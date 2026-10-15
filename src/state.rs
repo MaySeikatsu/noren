@@ -78,6 +78,14 @@ pub fn record_last(name: &str) {
     let _ = fs::write(last_file(), name);
 }
 
+/// Drop `name` as the `noren last` target (after discard/delete — jumping
+/// "back" must not resurrect or recreate a session the user just closed).
+pub fn forget_previous(name: &str) {
+    if fs::read_to_string(previous_file()).is_ok_and(|s| s.trim() == name) {
+        let _ = fs::remove_file(previous_file());
+    }
+}
+
 /// Rename carries history: replace `old` with `new` in `last`/`previous`
 /// (exact matches only), so `noren last` follows the renamed session.
 pub fn rename_in_history(old: &str, new: &str) {

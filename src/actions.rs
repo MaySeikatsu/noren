@@ -120,13 +120,15 @@ pub fn perform(kind: Kind, name: &str, state: SessionState) -> anyhow::Result<St
             zellij_quiet(&["kill-session", name])?;
             Ok(format!("{} {name}", kind.past()))
         }
-        (Kind::Delete, SessionState::Exited) => {
-            zellij_quiet(&["delete-session", name])?;
-            Ok(format!("{} {name}", kind.past()))
-        }
-        (Kind::Delete, SessionState::Live { .. }) => {
-            // --force kills the running session first.
-            zellij_quiet(&["delete-session", "--force", name])?;
+        (Kind::Delete, _) => {
+            // --force kills a running session first.
+            let mut args = vec!["delete-session"];
+            if state != SessionState::Exited {
+                args.push("--force");
+            }
+            args.push(name);
+            zellij_quiet(&args)?;
+            crate::state::forget_previous(name);
             Ok(format!("{} {name}", kind.past()))
         }
     }

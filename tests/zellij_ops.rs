@@ -379,3 +379,25 @@ fn restore_inside_recreates_from_snapshot_then_switches() {
         .unwrap();
     assert!(ci < si, "{log:?}");
 }
+
+#[test]
+fn restore_refuses_the_session_it_runs_in() {
+    let env = Env::new();
+    env.stub_zellij_logging();
+    let snaps = env.home.join(".local/state/noren/snapshots/cur");
+    std::fs::create_dir_all(&snaps).unwrap();
+    std::fs::write(snaps.join("20260101-000000.kdl"), "layout {}\n").unwrap();
+    let (_, err, ok) = env.run_env(
+        &["restore", "cur", "--force"],
+        &[("ZELLIJ", "1"), ("ZELLIJ_SESSION_NAME", "cur")],
+    );
+    assert!(!ok);
+    assert!(err.contains("from inside itself"), "{err}");
+    assert!(
+        !env.zellij_log()
+            .iter()
+            .any(|l| l.contains("kill-session") || l.contains("delete-session")),
+        "nothing may be killed: {:?}",
+        env.zellij_log()
+    );
+}
