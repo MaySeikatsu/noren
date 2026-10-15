@@ -100,6 +100,8 @@ pub struct Keys {
     pub live: String,
     pub hide: String,
     pub hidden: String,
+    pub rename: String,
+    pub paths: String,
 }
 
 impl Default for Keys {
@@ -118,6 +120,8 @@ impl Default for Keys {
             live: "ctrl-l".into(),
             hide: "ctrl-h".into(),
             hidden: "alt-h".into(),
+            rename: "ctrl-e".into(),
+            paths: "alt-p".into(),
         }
     }
 }
@@ -139,6 +143,8 @@ impl Keys {
             ("live", self.live.as_str()),
             ("hide", self.hide.as_str()),
             ("hidden", self.hidden.as_str()),
+            ("rename", self.rename.as_str()),
+            ("paths", self.paths.as_str()),
         ]
         .into_iter()
         .filter(|(_, k)| !k.trim().is_empty())
@@ -341,7 +347,7 @@ const TOP_KEYS: &[&str] = &[
 ];
 const KEYS_KEYS: &[&str] = &[
     "sessions", "dirs", "config", "all", "reload", "pin", "snapshot", "kill", "delete", "preview",
-    "live", "hide", "hidden",
+    "live", "hide", "hidden", "rename", "paths",
 ];
 const CONFIRM_KEYS: &[&str] = &["kill", "delete"];
 const DEFAULT_SESSION_KEYS: &[&str] = &["startup_command", "preview_command", "layout"];

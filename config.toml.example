@@ -108,6 +108,8 @@ live     = "ctrl-l"   # session previews: live screen <-> saved layout
 hide     = "ctrl-h"   # hide / unhide the selected entry (kept in
                       # ~/.local/state/noren/hidden; `noren list hidden`)
 hidden   = "alt-h"    # show hidden entries (⊘) in the list, or not
+rename   = "ctrl-e"   # rename the selected running session (⏎ applies)
+paths    = "alt-p"    # search names only (default) or names + paths
 
 # ---- Confirmation -------------------------------------------------------------
 # When kill/delete ask before acting (y/N right in the picker prompt; on a

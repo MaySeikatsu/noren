@@ -295,12 +295,15 @@ const NAME_PAD_MAX: usize = 28;
 /// name padded to `pad` and the dimmed `~`-abbreviated path as field 6.
 /// The picker shows fields 5,6 (tabstop 1) but matches field 5 only, so
 /// typing never scrolls a row sideways to a hit buried in its path.
-fn display(r: &Row, show_paths: bool, pad: usize, icon_w: usize) -> String {
+fn display(r: &Row, show_paths: bool, pad: usize, icon_w: usize, last: &str) -> String {
     let name = r.name.replace('\t', " ");
+    // ↩ marks where `noren last` (alt-tab) would go.
+    let is_last = r.source == "zellij" && !last.is_empty() && r.name == last;
+    let marker_w = if is_last { 2 } else { 0 };
     // Icons are right-aligned so names (and paths) start in one column.
     // Hidden rows (only listed with "show hidden") read as ghosts: ⊘ in
     // the icon column, dim italic name.
-    let (icon, styled) = if r.hidden {
+    let (icon, mut styled) = if r.hidden {
         (
             if r.icon.is_empty() { "" } else { "⊘ " }.to_string(),
             format!("\x1b[2;3m{name}\x1b[0m"),
@@ -308,10 +311,13 @@ fn display(r: &Row, show_paths: bool, pad: usize, icon_w: usize) -> String {
     } else {
         (r.icon.clone(), name.clone())
     };
+    if is_last {
+        styled.push_str(" \x1b[2m↩\x1b[0m");
+    }
     let indent = icon_w.saturating_sub(cell_width(&icon));
     let mut out = format!("{:indent$}{icon}{styled}", "");
     if show_paths && !r.path.is_empty() {
-        let fill = pad.saturating_sub(name.chars().count());
+        let fill = pad.saturating_sub(name.chars().count() + marker_w);
         let path = tilde_path(&r.path).replace('\t', " ");
         out.push_str(&format!("{:fill$} \t\x1b[2m{path}\x1b[0m", ""));
     }
@@ -328,6 +334,7 @@ fn cell_width(s: &str) -> usize {
 
 /// TSV columns: source, name, path, state, display.
 pub fn rows_to_tsv(rows: &[Row], cfg: &Config) -> String {
+    let last = crate::state::read_last();
     let icon_w = rows
         .iter()
         .filter(|r| r.source != "sep")
@@ -352,7 +359,7 @@ pub fn rows_to_tsv(rows: &[Row], cfg: &Config) -> String {
                 r.name,
                 r.path,
                 r.state,
-                display(r, cfg.show_paths, pad, icon_w)
+                display(r, cfg.show_paths, pad, icon_w, &last)
             )
         })
         .collect::<Vec<_>>()
@@ -608,6 +615,20 @@ mod tests {
     }
 
     #[test]
+    fn last_session_is_marked_and_stays_aligned() {
+        let r = at("zellij", "ab", "/p");
+        let d = display(&r, true, 6, 0, "ab");
+        assert_eq!(d, "ab \x1b[2m↩\x1b[0m   \t\x1b[2m/p\x1b[0m");
+        // Same column as an unmarked name of the same length.
+        assert_eq!(
+            display(&r, true, 6, 0, "other"),
+            "ab     \t\x1b[2m/p\x1b[0m"
+        );
+        // Folders never carry it, even with a matching name.
+        assert!(!display(&at("zoxide", "ab", "/p"), true, 6, 0, "ab").contains('↩'));
+    }
+
+    #[test]
     fn display_pads_names_and_dims_paths() {
         let cfg = Config::default();
         let home = crate::util::home_dir().to_string_lossy().into_owned();
@@ -632,7 +653,7 @@ mod tests {
         // Over the cap: just the two-space gap.
         assert_eq!(displays[3], format!("{long} \t\x1b[2m/l\x1b[0m"));
         // Tabs never leak into the display field (stays the 5th column).
-        let d = display(&at("zoxide", "ta\tb", "/t\tb"), true, 0, 0);
+        let d = display(&at("zoxide", "ta\tb", "/t\tb"), true, 0, 0, "");
         assert_eq!(d, "ta b \t\x1b[2m/t b\x1b[0m");
     }
 }

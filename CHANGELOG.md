@@ -21,10 +21,27 @@ the config `blacklist`); `Alt h` shows hidden entries — marked `⊘`, dimmed �
 so `Ctrl h` can unhide them. `noren list hidden` lists them. Entries hidden
 by the config blacklist explain where to unhide them.
 
+**Rename from the picker.** `Ctrl e` turns the prompt into an input
+prefilled with the selected session's name; `⏎` renames (pin, history,
+snapshots and hidden state move along), `Esc` cancels. Exited sessions
+can't be renamed (zellij limitation) and say so.
+
+**Typed paths.** A query that looks like a path (`~/…`, `/…`, `./…`) means
+that folder: `⏎` connects to it, or — if it doesn't exist — asks
+`create ~/x and a session there? y/N`.
+
+**Search paths too.** `Alt p` switches matching between names only and
+names + paths.
+
+**`↩` marks the `noren last` target** in the list.
+
 **Key overview wraps** to the width of the list pane (and rewraps on
 resize), so binds are no longer cut off in narrow or floating panes.
 
-Fixes: snapshot tab counts no longer include tab templates.
+Fixes: snapshot tab counts no longer include tab templates; the live
+preview could show another running session when the previewed one had
+just exited (zellij answers for any running session when the requested
+one is gone) — it now checks first.
 
 ## 0.2.0
 
