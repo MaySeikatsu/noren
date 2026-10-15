@@ -136,14 +136,23 @@ fn tail_lines(screen: &str, rows: usize) -> Vec<&str> {
     lines[start..end].to_vec()
 }
 
+/// Why there is no live view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Miss {
+    /// The session isn't running (any more).
+    NotRunning,
+    /// Running, but zellij didn't answer usably (timeout, no terminal pane).
+    Unavailable,
+}
+
 /// Header + tab strip + the pane's current screen, fitted to cols × rows.
-pub fn render_live(name: &str, cols: usize, rows: usize) -> Option<String> {
+pub fn render_live(name: &str, cols: usize, rows: usize) -> Result<String, Miss> {
     render_live_at(name, None, cols, rows)
 }
 
 /// Live view of one specific tab (0-based `position`; tab menu preview).
 pub fn render_live_tab(name: &str, position: usize, cols: usize, rows: usize) -> Option<String> {
-    render_live_at(name, Some(position), cols, rows)
+    render_live_at(name, Some(position), cols, rows).ok()
 }
 
 /// A running session's tabs for the tab menu: 1-based position, name,
@@ -169,13 +178,22 @@ pub fn tab_summaries(name: &str) -> Option<Vec<crate::tabs::TabInfo>> {
     )
 }
 
-fn render_live_at(name: &str, want: Option<usize>, cols: usize, rows: usize) -> Option<String> {
+fn render_live_at(
+    name: &str,
+    want: Option<usize>,
+    cols: usize,
+    rows: usize,
+) -> Result<String, Miss> {
     // `zellij action` with an unknown ZELLIJ_SESSION_NAME silently targets
     // whatever session is running (0.45.1) — make sure it's really ours and
     // really live (the list may be seconds old).
     if crate::sources::zellij::session_state(name) != Some("live") {
-        return None;
+        return Err(Miss::NotRunning);
     }
+    render_running(name, want, cols, rows).ok_or(Miss::Unavailable)
+}
+
+fn render_running(name: &str, want: Option<usize>, cols: usize, rows: usize) -> Option<String> {
     let tabs: Vec<Tab> = action_json(name, &["list-tabs", "-j", "-s"])?;
     let panes: Vec<Pane> = action_json(name, &["list-panes", "-a", "-j"])?;
     let tab = match want {

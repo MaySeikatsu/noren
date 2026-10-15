@@ -162,15 +162,14 @@ fn summary_line(name: &str) -> Option<String> {
     Some(format!("\x1b[1m{}\x1b[0m", format_summary(&f, cols)))
 }
 
-/// Session preview from the cached layout only: visual box-art (unless
-/// preview_mode = "text") under fzf, else the text tree, with the "last
-/// active" summary line on top. Never talks to zellij.
-fn layout_render(cfg: &Config, name: &str) -> String {
+/// Session preview from the cached layout only: visual box-art under fzf
+/// (unless `text`), else the text tree, with the "last active" summary
+/// line on top. Never talks to zellij.
+fn layout_render(name: &str, text: bool) -> String {
     // The render itself stays untouched (text mode is golden-tested).
     let summary = summary_line(name);
     let reserved = usize::from(summary.is_some());
-    let visual = cfg.preview_mode != "text";
-    let body = visual
+    let body = (!text)
         .then(fzf_preview_dims)
         .flatten()
         .and_then(|(w, h)| layout_preview::render_session_visual(name, w, h - reserved))
@@ -181,54 +180,87 @@ fn layout_render(cfg: &Config, name: &str) -> String {
     }
 }
 
-/// `mode` overrides `preview_mode` for this call (the picker's live/layout
-/// toggle): "live" | "layout".
+/// The session preview style in effect: an explicit `--mode`, else the
+/// picker's ^/ choice, else the config. "visual" reads as "layout".
+fn session_style(cfg: &Config, mode: Option<&str>) -> String {
+    let m = mode
+        .map(str::to_string)
+        .or_else(crate::picker::preview_mode_override)
+        .unwrap_or_else(|| cfg.preview_mode.clone());
+    match m.as_str() {
+        "live" | "text" => m,
+        _ => "layout".to_string(),
+    }
+}
+
+/// `noren preview <row>` — prints the preview and, inside the picker,
+/// labels the preview pane with what it actually shows (and why, when a
+/// live view had to fall back).
 pub fn preview(cfg: &Config, line: &str, mode: Option<&str>) {
     let r = parse_line(line);
-    if r.state == "sep" {
-        println!();
-        return;
-    }
-    let live = mode.unwrap_or(&cfg.preview_mode) == "live";
-    let out = match r.state {
-        // Live mode: the session's current screen. Only for rows listed as
-        // running — an exited session is never contacted (it would hang or
-        // resurrect); failures fall back to the layout render below.
-        "live" if live => fzf_preview_dims()
-            .and_then(|(w, h)| crate::live_preview::render_live(r.name, w, h))
-            .unwrap_or_else(|| layout_render(cfg, r.name)),
-        "live" | "exited" => layout_render(cfg, r.name),
-        // Snapshot menu: what a snapshot holds (the file only), and for the
-        // "take one now" row what the session's cache looks like.
+    let style = session_style(cfg, mode);
+    let text = style == "text";
+    let layout_label = if text { "≡ text" } else { "▦ layout" };
+    let (out, label) = match r.state {
+        "sep" => (String::new(), String::new()),
+        // Live: the session's current screen. Only rows listed as running
+        // are contacted — exited sessions never (it would hang or resurrect).
+        "live" if style == "live" => {
+            match fzf_preview_dims()
+                .ok_or(crate::live_preview::Miss::Unavailable)
+                .and_then(|(w, h)| crate::live_preview::render_live(r.name, w, h))
+            {
+                Ok(screen) => (screen, "● live".to_string()),
+                Err(miss) => {
+                    let why = match miss {
+                        crate::live_preview::Miss::NotRunning => "session not running",
+                        crate::live_preview::Miss::Unavailable => "live view unavailable",
+                    };
+                    (layout_render(r.name, false), format!("▦ layout — {why}"))
+                }
+            }
+        }
+        "exited" if style == "live" => (
+            layout_render(r.name, false),
+            "▦ layout — session not running".to_string(),
+        ),
+        "live" | "exited" | "snapnew" => (layout_render(r.name, text), layout_label.to_string()),
+        // Snapshot menu: what a snapshot holds (the file only).
         "snapshot" => {
             let file = std::path::Path::new(r.path);
             let head = format!("\x1b[1m📸 {}\x1b[0m", crate::snapshot::describe(file));
-            let body = (cfg.preview_mode != "text")
+            let body = (!text)
                 .then(fzf_preview_dims)
                 .flatten()
                 .and_then(|(w, h)| layout_preview::render_file_visual(file, w, h - 1))
                 .unwrap_or_else(|| layout_preview::render_file(file));
-            format!("{head}\n{body}")
+            (format!("{head}\n{body}"), "📸 snapshot".to_string())
         }
-        "snapnew" => layout_render(cfg, r.name),
         // Tab menu: that tab's live screen when the session runs (path
         // holds the 1-based position), else the saved layout.
         "tab" => {
             let position: usize = r.path.parse().unwrap_or(1);
-            fzf_preview_dims()
-                .filter(|_| cfg.preview_mode == "live")
+            let live = (style == "live")
+                .then(fzf_preview_dims)
+                .flatten()
                 .and_then(|(w, h)| {
                     crate::live_preview::render_live_tab(r.name, position.saturating_sub(1), w, h)
-                })
-                .unwrap_or_else(|| layout_render(cfg, r.name))
+                });
+            match live {
+                Some(screen) => (screen, format!("● live · tab {position}")),
+                None => (
+                    layout_render(r.name, text),
+                    format!("{layout_label} · whole session"),
+                ),
+            }
         }
-        "tabnone" => String::new(),
+        "tabnone" => (String::new(), String::new()),
         "config" => {
             let pv = cfg
                 .find_session(r.name)
                 .and_then(|s| s.preview_command.clone())
                 .unwrap_or_default();
-            render_path(r.path, &pv)
+            (render_path(r.path, &pv), "⚙ config entry".to_string())
         }
         _ => {
             let pv = if r.path.is_empty() {
@@ -238,9 +270,15 @@ pub fn preview(cfg: &Config, line: &str, mode: Option<&str>) {
                     .and_then(|w| w.preview_command.clone())
                     .unwrap_or_default()
             };
-            render_path(r.path, &pv)
+            (render_path(r.path, &pv), "📁 folder".to_string())
         }
     };
+    let label = if label.is_empty() {
+        " preview ".to_string()
+    } else {
+        format!(" preview · {label} ")
+    };
+    crate::picker::fzf_post(&crate::picker::act("change-preview-label", &label));
     println!("{}", expand_tabs(&out));
 }
 
