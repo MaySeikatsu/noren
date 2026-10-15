@@ -451,6 +451,9 @@ fn connect_outside_with_layout_uses_new_session_with_layout() {
 fn connect_inside_zellij_creates_background_and_pipes_switch() {
     let env = Env::new();
     env.stub_zellij_logging();
+    let plugins = env.home.join(".config/zellij/plugins");
+    fs::create_dir_all(&plugins).unwrap();
+    fs::write(plugins.join("zellij-switch.wasm"), "").unwrap();
     let (_, _, ok) = env.run_env(&["connect", "ghost"], &[("ZELLIJ", "1")]);
     assert!(ok);
     let log = env.zellij_log();
@@ -509,6 +512,9 @@ fi"#,
     );
     fs::create_dir_all(env.home.join(".local/state/noren")).unwrap();
     fs::write(env.home.join(".local/state/noren/previous"), "other\n").unwrap();
+    let plugins = env.home.join(".config/zellij/plugins");
+    fs::create_dir_all(&plugins).unwrap();
+    fs::write(plugins.join("zellij-switch.wasm"), "").unwrap();
 
     let (out, _, ok) = env.run_env(
         &["discard"],

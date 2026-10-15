@@ -8,17 +8,21 @@
 //!
 //! Connect:
 //!   - inside zellij: create detached if missing, then switch the client in
-//!     place via the zellij-switch plugin (never `zellij attach` -> nesting)
+//!     place via the zellij-switch plugin, native `action switch-session` as
+//!     fallback (never `zellij attach` -> nesting)
 //!   - outside: exec zellij attach --create (or --new-session-with-layout)
 
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use serde::Serialize;
 
 use crate::config::Config;
-use crate::sources::zellij::session_names;
+use crate::sources::zellij::{
+    CREATE_TIMEOUT_MS, POLL_INTERVAL_MS, POLL_TIMEOUT_MS, attached_clients, create_background,
+    run_with_timeout, session_names, session_state, wait_until,
+};
 use crate::state::record_last;
 use crate::util::{expand_path, home_dir, is_pathlike, name_from_path, sanitize};
 
@@ -135,20 +139,85 @@ pub fn inside_zellij() -> bool {
         .unwrap_or(false)
 }
 
-/// Switch the current client via the zellij-switch plugin (never `attach`
-/// from inside — nesting).
+/// Kill-timeout for switch calls (ms). A pipe to a missing plugin file — or
+/// to one whose permission prompt is still pending — never returns.
+const SWITCH_TIMEOUT_MS: u64 = 2000;
+
+/// Switch the current client in place (never `attach` from inside —
+/// nesting). Prefers the zellij-switch plugin; falls back to the native
+/// `zellij action switch-session`, and errors (with a hint) instead of
+/// silently doing nothing when neither works.
 pub fn switch_in_place(name: &str) -> anyhow::Result<()> {
-    let plugin = format!(
-        "file:{}",
-        home_dir()
-            .join(".config/zellij/plugins/zellij-switch.wasm")
-            .display()
-    );
-    Command::new("zellij")
-        .args(["pipe", "--plugin", &plugin, "--"])
-        .arg(format!("--session {name}"))
-        .status()?;
-    Ok(())
+    let current = std::env::var("ZELLIJ_SESSION_NAME").unwrap_or_default();
+    if name == current {
+        return Ok(()); // already there
+    }
+    let mut why: Vec<String> = Vec::new();
+
+    let plugin = home_dir().join(".config/zellij/plugins/zellij-switch.wasm");
+    if plugin.exists() {
+        let mut cmd = Command::new("zellij");
+        cmd.args([
+            "pipe",
+            "--plugin",
+            &format!("file:{}", plugin.display()),
+            "--",
+        ])
+        .arg(format!("--session {name}"));
+        match run_with_timeout(cmd, SWITCH_TIMEOUT_MS) {
+            Some(o) if o.status.success() => return Ok(()),
+            Some(o) => why.push(format!("zellij-switch pipe failed ({})", o.status)),
+            None => why.push(format!(
+                "zellij-switch pipe timed out after {SWITCH_TIMEOUT_MS} ms \
+                 (plugin permissions not granted yet?)"
+            )),
+        }
+    } else {
+        why.push(format!("{} not found", plugin.display()));
+    }
+
+    // Native fallback. It never resurrects, so wake EXITED sessions first
+    // (`attach --create-background` resurrects from the cache, attaches no
+    // client).
+    if session_state(name) == Some("exited") {
+        create_background(name, None, None);
+    }
+    // `switch-session` exits 0 even when it moves nobody (zellij 0.45.1 from
+    // the CLI), so confirm the move via our session's client count.
+    let before = if current.is_empty() {
+        0
+    } else {
+        attached_clients(&current)
+    };
+    let mut cmd = Command::new("zellij");
+    cmd.args(["action", "switch-session", name]);
+    match run_with_timeout(cmd, SWITCH_TIMEOUT_MS) {
+        Some(o) if o.status.success() => {
+            if before == 0
+                || wait_until(1500, POLL_INTERVAL_MS, || {
+                    attached_clients(&current) < before
+                })
+            {
+                return Ok(());
+            }
+            why.push("`zellij action switch-session` exited 0 but no client moved".into());
+        }
+        Some(o) => why.push(format!(
+            "`zellij action switch-session` failed ({})",
+            o.status
+        )),
+        None => why.push(format!(
+            "`zellij action switch-session` timed out after {SWITCH_TIMEOUT_MS} ms"
+        )),
+    }
+
+    anyhow::bail!(
+        "could not switch to session \"{name}\": {}\n\
+         hint: install the zellij-switch plugin as ~/.config/zellij/plugins/zellij-switch.wasm \
+         (https://github.com/mostafaqanbaryan/zellij-switch) and grant its permissions, \
+         or upgrade zellij to a release whose `zellij action switch-session` works from the CLI",
+        why.join("; ")
+    )
 }
 
 /// Attach to / create / switch to the resolved session.
@@ -168,40 +237,24 @@ pub fn session_connect(cfg: &Config, target: &str) -> anyhow::Result<()> {
         if inside {
             // Create a detached background session, then switch to it below.
             let lp = layout_path(&r.layout);
-            let mut cmd = Command::new("zellij");
-            if !r.layout.is_empty() && lp.exists() {
-                // `-- true` is a no-op child so the creation detaches cleanly.
-                cmd.args(["--session", &r.name, "--new-session-with-layout"])
-                    .arg(&lp)
-                    .args(["--", "true"]);
-            } else {
-                cmd.args(["attach", "--create-background", &r.name]);
-            }
-            let _ = cmd
-                .current_dir(&cwd)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
-            // Give zellij a moment to register the new session.
-            std::thread::sleep(std::time::Duration::from_millis(300));
+            let layout = (!r.layout.is_empty() && lp.exists()).then_some(lp.as_path());
+            create_background(&r.name, layout, Some(&cwd));
         }
         if !r.startup_command.is_empty() {
             // Best effort; the pane opens in the resolved path.
-            let _ = Command::new("zellij")
-                .args([
-                    "--session",
-                    &r.name,
-                    "run",
-                    "-c",
-                    "--",
-                    "sh",
-                    "-c",
-                    &r.startup_command,
-                ])
-                .current_dir(&cwd)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+            let mut cmd = Command::new("zellij");
+            cmd.args([
+                "--session",
+                &r.name,
+                "run",
+                "-c",
+                "--",
+                "sh",
+                "-c",
+                &r.startup_command,
+            ])
+            .current_dir(&cwd);
+            let _ = run_with_timeout(cmd, CREATE_TIMEOUT_MS);
         }
     }
 
@@ -210,12 +263,13 @@ pub fn session_connect(cfg: &Config, target: &str) -> anyhow::Result<()> {
         let _ = crate::snapshot::take_snapshot(cfg, &r.name);
     }
 
-    record_last(&r.name);
-
     if inside {
         switch_in_place(&r.name)?;
+        // Only a switch that happened is history.
+        record_last(&r.name);
         Ok(())
     } else {
+        record_last(&r.name);
         let lp = layout_path(&r.layout);
         let mut cmd = Command::new("zellij");
         if !r.layout.is_empty() && !exists && lp.exists() {
@@ -256,10 +310,17 @@ pub fn discard(cfg: &Config, name: Option<&str>) -> anyhow::Result<()> {
             live.first().cloned().unwrap_or_default()
         };
         if !fallback.is_empty() {
+            let before = attached_clients(&target);
             switch_in_place(&fallback)?;
             record_last(&fallback);
-            // Let the client finish switching before its old session dies.
-            std::thread::sleep(std::time::Duration::from_millis(300));
+            // Let the client finish switching before its old session dies:
+            // wait for this session's client count to drop (skip when it was
+            // unknown/0 — nothing to wait for).
+            if before > 0 {
+                wait_until(POLL_TIMEOUT_MS, POLL_INTERVAL_MS, || {
+                    attached_clients(&target) < before
+                });
+            }
         }
     }
 
