@@ -2,21 +2,34 @@
 
 ## 0.2.4
 
-**Tabs in the list (opt-in).** `show_tabs = "column"` shows each session's
-tabs in their own column between name and path —
-`nixos  (nixos, claude, nvim, noren)  ~/.config/nixos` — or right behind
-the name with `"inline"`. Running sessions report their current tabs;
-exited ones are read from the saved layout (never contacted). Long lists
-are cut with `…`.
+**All tabs live, by default.** The live preview shows every tab's focused
+pane side by side (stacked when narrow) — background tabs stay current —
+each under a full-width title bar (green = active tab), with heavy
+dividers. `live_all_tabs = true` is the default; it is the first step of
+the preview cycle: all tabs → active tab → layout → text → off.
+
+**Preview keys your way.** `preview_toggle = "separate"` makes `Ctrl /` a
+plain show/hide and `Ctrl l` (`keys.preview_style`) cycles the style;
+`"combined"` (default) keeps one cycling key. `Ctrl l` cycles the style in
+either mode.
+
+**Picker and preview as two areas.** The preview background is a shade off
+the terminal's (asked via OSC 11; lighter on pure black) — `preview_tint`,
+or set `preview_bg` explicitly.
+
+**Tabs in the list, by default.** `show_tabs = "inline"` (new default) puts
+each session's tabs right behind its name; `"column"` gives them their own
+column between name and path — `nixos  (nixos, claude, nvim)  ~/.config/nixos`.
+Running sessions report their current tabs; exited ones are read from the
+saved layout (never contacted). Long lists are cut with `…`.
+
+**Keys.** The tab menu moves to `Ctrl w` (was `Alt t`) and joins the compact
+overview, which is now one line by default (`header_lines = 1`); `F1` lists
+every bind, the config view and the style key included.
 
 Fixes: menu hints and status messages (e.g. "⏎ go to this tab · esc back",
 "📌 pinned …") were swallowed when the list reloaded in the same step — a
 side effect of 0.2.3's cursor tracking.
-
-**All tabs live (opt-in).** `live_all_tabs = true` turns the live preview
-into a grid of every tab's focused pane — background tabs stay current —
-side by side when there's room, stacked when narrow; the active tab's title
-is highlighted.
 
 ## 0.2.3
 

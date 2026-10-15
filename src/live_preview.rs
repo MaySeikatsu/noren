@@ -331,12 +331,16 @@ fn render_grid(
         let cells: Vec<Vec<String>> = row
             .iter()
             .map(|t| {
-                let title = truncate(&format!(" {} ", t.name), cell_w);
-                let mut lines = vec![if t.position == active {
-                    format!("\x1b[7m{}", fit(&title, cell_w))
+                // A full-width title bar per tab: green for the active
+                // one, plain reverse video for the rest.
+                let (mark, style) = if t.position == active {
+                    ("●", "\x1b[1;7;32m")
                 } else {
-                    format!("\x1b[1m{}", fit(&title, cell_w))
-                }];
+                    (" ", "\x1b[7m")
+                };
+                let title = truncate(&format!(" {mark} {} ", t.name), cell_w);
+                let pad = cell_w.saturating_sub(title.chars().count());
+                let mut lines = vec![format!("{style}{title}{:pad$}\x1b[0m", "")];
                 let screen = pick_pane(panes, t.position)
                     .and_then(|p| dump(name, p))
                     .unwrap_or_default();
@@ -348,9 +352,10 @@ fn render_grid(
             .collect();
         for i in 0..cell_h {
             let parts: Vec<&str> = cells.iter().map(|c| c[i].as_str()).collect();
-            out.push(parts.join("\x1b[2m│\x1b[0m"));
+            out.push(parts.join("\x1b[1m┃\x1b[0m"));
         }
-        out.push(String::new());
+        // A rule between grid rows.
+        out.push(format!("\x1b[2m{}\x1b[0m", "━".repeat(cols)));
     }
     out.pop();
     if shown < n {
